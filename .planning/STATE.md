@@ -23,6 +23,7 @@
 
 ## GitHub
 - Phase 1 issue: #1 (https://github.com/DeanItServices/home-media-server/issues/1)
+- Phase 1 PR: #2 (https://github.com/DeanItServices/home-media-server/pull/2), CI `lint` green
 
 ## Next Action
 Run `/legion:review` to verify Phase 1: Host & Repo Foundation
