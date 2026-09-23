@@ -1,4 +1,4 @@
-# Arr stack — services added in Phases 2 and 4 (prowlarr, sonarr, sonarr-4k, radarr, radarr-4k, lidarr; bazarr, recyclarr, maintainerr)
+# Arr stack — services added in Phases 2 and 4 (prowlarr, sonarr, sonarr-anime, sonarr-4k, radarr, radarr-4k, lidarr; bazarr, recyclarr, maintainerr)
 # New services: extends: {file: _common.yaml, service: base} and pin image tags (never :latest).
 services: {}
 networks:

@@ -28,8 +28,8 @@
 **Requirements**: R3, R4, R5
 **Recommended Agents**: engineering-infrastructure-devops, engineering-backend-architect, testing-api-tester, testing-qa-verification-specialist
 **Success Criteria**:
-- [ ] SABnzbd, Prowlarr, Sonarr, Sonarr-4K, Radarr, Radarr-4K, Lidarr, Plex, Jellyfin, Seerr and Tautulli are all healthy (`docker compose ps`)
-- [ ] Prowlarr syncs its indexers to all 5 *arr instances (checked via API)
+- [ ] SABnzbd, Prowlarr, Sonarr, Sonarr-Anime, Sonarr-4K, Radarr, Radarr-4K, Lidarr, Plex, Jellyfin, Seerr and Tautulli are all healthy (`docker compose ps`)
+- [ ] Prowlarr syncs its (Usenet-only) indexers to all 6 *arr instances (checked via API); the old torrent indexers and the qBittorrent/NZBGet download clients are removed
 - [ ] A test request in Seerr (HD, 4K, anime) lands in the correct instance, root folder and SAB category, and is imported as a hardlink (same inode)
 - [ ] Plex and Jellyfin dashboards show hardware transcoding (hw) on a forced transcode
 - [ ] Old app configs from `/tank/migration/old-docker-<date>.tar.zst` (archived from the old Ubuntu VM's `/docker`; Sonarr/Radarr/Plex/SAB) are migrated onto the same or newer image versions with paths remapped to `/data/...`, keeping settings, history and Plex watch state

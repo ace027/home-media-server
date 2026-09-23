@@ -33,7 +33,7 @@ compose.yaml            # root Compose file; include: of stacks/*.yaml
 stacks/_common.yaml      # shared `base` service template, pulled in via extends
 stacks/edge.yaml         # traefik, authentik, crowdsec, cloudflare-ddns, twingate-connector (Phase 3)
 stacks/media.yaml        # plex, jellyfin, seerr, tautulli (Phase 2)
-stacks/arr.yaml          # prowlarr, sonarr(-4k), radarr(-4k), lidarr, bazarr, recyclarr, maintainerr (Phases 2, 4)
+stacks/arr.yaml          # prowlarr, sonarr(-anime, -4k), radarr(-4k), lidarr, bazarr, recyclarr, maintainerr (Phases 2, 4)
 stacks/download.yaml     # sabnzbd (Phase 2)
 stacks/transcode.yaml    # fileflows (Phase 4)
 stacks/ops.yaml          # homepage, uptime-kuma, notifiarr, diun, backrest, dozzle (Phase 5)

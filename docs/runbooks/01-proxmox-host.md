@@ -80,6 +80,7 @@ consolidated without you naming it.
    #    same or newer versions, never older, or the app databases can't be read)
    docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | sudo tee /docker/_containers.txt
    docker inspect $(docker ps -aq) | sudo tee /docker/_inspect.json >/dev/null
+   docker inspect --format '{{.Name}} {{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.version"}}' $(docker ps -aq) | sudo tee /docker/_versions.txt
    du -sh /docker                     # size check (Plex metadata can be large)
 
    # 2) Stop the containers so the SQLite databases are consistent

@@ -19,10 +19,10 @@ Family members request a title in one place, it appears automatically at the rig
 - [ ] **R1 Repo foundation:** `compose.yaml` using `include:` with stacks/{edge,media,arr,download,transcode,ops}.yaml, `.env.example`, gitignored `secrets/`, pinned image tags, `scripts/mkdirs.sh`, and a docs skeleton.
 - [ ] **R2 Host & VM:** ZFS datasets (`tank/data` with recordsize=1M, `tank/backups`), IOMMU/vfio, a Debian 13 VM (q35/OVMF) with appdata on SSD, Arc A380 passthrough with ReBAR (`vainfo` OK), `/data` mounted via virtiofs, Docker Engine and the Compose plugin. Delivered as a runbook plus scripts.
 - [ ] **R3 Download:** SABnzbd with categories tv, tv-4k, movies, movies-4k, music, anime, following the TRaSH single `/data` layout.
-- [ ] **R4 Arr:** Prowlarr syncing to Sonarr, Sonarr-4K, Radarr, Radarr-4K and Lidarr. Anime uses its own root folders and profiles in the main Sonarr and Radarr. Imports are hardlinks or atomic moves.
+- [ ] **R4 Arr:** Prowlarr syncing to Sonarr, **Sonarr-Anime**, Sonarr-4K, Radarr, Radarr-4K and Lidarr. Anime series use the dedicated Sonarr-Anime instance (migrated from the old `animesonarr`), and anime movies use the `anime-movies` root folder in the main Radarr. Imports are hardlinks or atomic moves.
 - [ ] **R5 Media:** Plex (Plex Pass, QSV hardware transcoding, remote access on 32400, remote quality set to Original with an overall cap of about 400 Mbps), Jellyfin (QSV, same libraries), Seerr (Plex login; 4K requests go to the 4K instances and need admin approval), Tautulli.
 - [ ] **R6 Edge:** Traefik v3 with wildcard certificates via Cloudflare DNS-01, `cloudflare-ddns` for the dynamic IP (DNS-only records), Authentik (invites, admin MFA, OIDC for Jellyfin), CrowdSec bouncer, geo-block, secure headers. Only ports 443 and 32400 are forwarded.
-- [ ] **R7 Private admin:** Twingate connector (preferably in a separate LXC). Admin UIs live under `*.int.<domain>` behind the `lan-only` ipAllowList plus Authentik forward-auth.
+- [ ] **R7 Private admin:** Twingate connector in a **separate LXC**, reusing the existing Twingate network. Admin UIs live under `*.int.<domain>` behind the `lan-only` ipAllowList plus Authentik forward-auth.
 - [ ] **R8 AV1 transcode:** FileFlows server and GPU node, QSV AV1, running 01:00-07:00 with 1 runner, covering all libraries including 4K.
   - 4K is 10-bit and keeps HDR10. Dolby Vision profile 7/8 files lose the DV layer; profile 5 files are skipped.
   - A converted file is kept only if it's at least 15-20% smaller, and each replacement triggers a rescan in the *arr apps, Plex and Jellyfin.
@@ -65,7 +65,8 @@ Family members request a title in one place, it appears automatically at the rig
 | DNS | Dynamic IP; ToS-safe for media | Cloudflare DNS-only + cloudflare-ddns |
 | Request app | Overseerr and Jellyseerr merged in 2026 | Seerr |
 | Primary server | Owner's Plex Pass covers family remote streaming | Plex primary, Jellyfin backup |
-| 4K/anime | Keep family on appropriate quality; stay manageable | Separate 4K instances; anime via root folders and profiles |
+| 4K/anime | Keep family on appropriate quality; keep the existing anime instance's history | Separate 4K instances; a dedicated Sonarr-Anime instance (migrated); anime movies via a root folder in Radarr |
+| Old stack migration | Old server ran qBittorrent+gluetun+flaresolverr, NZBGet, a separate animesonarr, and a Twingate connector | Usenet only (retire torrents and NZBGet); keep a separate anime Sonarr; Twingate connector moves to a separate LXC. See `.planning/migration/old-stack-inventory.md` |
 | AV1 | Save space; family devices support AV1 | FileFlows on all libraries including 4K; HDR10 kept, DV dropped |
 | Media pool | Owner is moving SSDs with an existing pool and library into the new server | Import (optionally renamed to `tank`); consolidate into a single `<pool>/data` dataset; `05-import-pool.sh` + runbook 01 §1a |
 | Execution mode | Host, router and GPU steps are high-stakes | Guided |
