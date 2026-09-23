@@ -81,6 +81,12 @@ consolidated without you naming it.
    docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | sudo tee /docker/_containers.txt
    docker inspect $(docker ps -aq) | sudo tee /docker/_inspect.json >/dev/null
    docker inspect --format '{{.Name}} {{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.version"}}' $(docker ps -aq) | sudo tee /docker/_versions.txt
+   # Old layout: two compose projects, /docker/plex (plex, seerr, tautulli)
+   # and /docker/servarr (everything else). Save the resolved compose files;
+   # their volume mappings are what Phase 2 uses to remap old paths.
+   ls /docker/plex /docker/servarr | sudo tee /docker/_layout.txt
+   for p in /docker/plex /docker/servarr; do (cd "$p" && docker compose config); done \
+     | sudo tee /docker/_compose-resolved.yml >/dev/null
    du -sh /docker                     # size check (Plex metadata can be large)
 
    # 2) Stop the containers so the SQLite databases are consistent

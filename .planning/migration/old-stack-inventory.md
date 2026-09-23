@@ -22,4 +22,11 @@ Source: the old Ubuntu VM's `docker ps` (2026-09-23). Configs live in `/docker` 
 | flaresolverr | ghcr.io/flaresolverr/flaresolverr | **Retire** (only used by torrent indexers) | — | — |
 | deunhealth | qmcgaw/deunhealth | **Retire** (paired with gluetun). Health alerting comes in Phase 5 | — | 5 |
 
+## Old `/docker` layout
+There are two compose projects on the old VM:
+- `/docker/plex`: plex, seerr, tautulli.
+- `/docker/servarr`: every other container.
+
+The archive also holds `_containers.txt`, `_inspect.json`, `_versions.txt`, `_layout.txt` and `_compose-resolved.yml`. The resolved compose file's `volumes:` mappings define the **old in-container paths** that the *arr databases and Plex libraries reference. Phase 2 remaps each of them to `/data/media/*` (or keeps compatible mount paths where remapping is riskier). Restore target: `/docker/<project>/<app>` → `/opt/appdata/<app>`, with `animesonarr` → `sonarr-anime`.
+
 New instances with no old config: `sonarr-4k`, `radarr-4k`, plus Traefik, Authentik, CrowdSec, cloudflare-ddns, Recyclarr, Maintainerr, and the Phase 5 ops apps.
