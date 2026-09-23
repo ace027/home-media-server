@@ -1,0 +1,342 @@
+# Runbook 01 — Proxmox host preparation
+
+This runbook takes the Proxmox host from a bare ZFS pool to a VM ready for
+Debian 13 installation, with the Intel Arc A380 bound to `vfio-pci` and
+`/data` shared into the VM. Run every command on the Proxmox host itself
+(as root, or with `sudo`).
+
+## Prerequisites
+
+- Proxmox VE 8.4 or later. Check with:
+  ```bash
+  pveversion
+  ```
+  Expected output:
+  ```
+  pve-manager/9.0.6/49c767b70aeb6660 (running kernel: 6.14.8-2-pve)
+  ```
+  (Yours will differ in the trailing hash and kernel version — only the
+  `pve-manager` major.minor matters.)
+- A ZFS pool named `tank` already exists (`zpool list` shows it).
+- The Intel Arc A380 is physically installed and visible to the host
+  (`lspci -nn | grep -i arc` should show it).
+- This repository is cloned on the host, e.g. to `/root/home-media-server`.
+- The Debian 13 netinst ISO is uploaded to the `local` storage. Real ISO
+  file names include the point release (e.g.
+  `debian-13.1.0-amd64-netinst.iso`), so find the exact name before running
+  `scripts/host/20-create-vm.sh`:
+  ```bash
+  pvesm list local --content iso
+  ```
+  Expected output:
+  ```
+  local:iso/debian-13-amd64-netinst.iso iso 123456789
+  ```
+  Pass the exact name to the VM-creation script, e.g.
+  `ISO=local:iso/debian-13.1.0-amd64-netinst.iso scripts/host/20-create-vm.sh --apply`.
+- The storage that will hold the VM's disk exists. Check with:
+  ```bash
+  pvesm status
+  ```
+  On a host whose Proxmox root is **not** on ZFS, the default
+  `VM_STORAGE=local-zfs` will not exist; set `VM_STORAGE=local-lvm` (or
+  whatever `pvesm status` lists) when running `20-create-vm.sh`.
+
+## 1. BIOS settings
+
+Before touching software, set these in the host's BIOS/UEFI setup:
+
+- **Intel VT-d** (or **AMD-Vi** on AMD platforms) — enabled. This is
+  IOMMU support and is required for PCI passthrough.
+- **Above 4G Decoding** — enabled. Required for the A380's large PCI BARs.
+- **Resizable BAR (ReBAR)** — enabled. Intel Arc GPUs perform poorly, or
+  fail to initialize under passthrough, without it.
+- Optionally, if the host also has an integrated GPU (iGPU) or onboard
+  video, set the **primary display** to that device rather than the A380,
+  so the A380 stays free for passthrough and the host console doesn't
+  depend on it.
+
+Save, reboot into Proxmox, and continue below.
+
+## 2. ZFS datasets
+
+Creates `tank/data` (recordsize=1M, compression=lz4, atime=off, xattr=sa —
+tuned for large media files) and `tank/backups` (compression=zstd), from the
+repo root on the host.
+
+```bash
+cd /root/home-media-server
+scripts/host/00-zfs-datasets.sh
+```
+
+Expected output:
+```
+DRY-RUN: zfs create -o recordsize=1M -o compression=lz4 -o atime=off -o xattr=sa tank/data
+DRY-RUN: zfs create -o compression=zstd tank/backups
+[INFO] next: run 10-iommu-vfio.sh
+```
+
+Review the commands, then apply them:
+
+```bash
+scripts/host/00-zfs-datasets.sh --apply
+```
+
+Confirm the recordsize:
+
+```bash
+zfs get recordsize tank/data
+```
+
+Expected output:
+```
+NAME       PROPERTY    VALUE    SOURCE
+tank/data  recordsize  1M       local
+```
+
+**Warning:** `tank/data` must never gain child datasets. The *arr apps
+import downloads into the media library with hardlinks, and hardlinks
+cannot cross ZFS dataset boundaries. If you (or a script) later run
+`zfs create tank/data/something`, re-running `00-zfs-datasets.sh` will
+detect it and refuse:
+```
+[ERROR] child datasets break hardlinks: tank/data/something
+```
+Destroy the child dataset and move its contents back under `tank/data` as
+plain directories instead.
+
+## 3. IOMMU and vfio
+
+Binds the Arc A380 (PCI ID `8086:56a5`) and its audio function
+(`8086:4f92`) to `vfio-pci` instead of the host's `i915`/`xe` driver, so the
+GPU can be passed through cleanly to the VM. Detects the CPU vendor to pick
+the right IOMMU kernel parameters, and edits `/etc/kernel/cmdline`
+(systemd-boot, the default when Proxmox root is on ZFS) or
+`/etc/default/grub` (otherwise) — whichever is present.
+
+```bash
+scripts/host/10-iommu-vfio.sh
+```
+
+Expected output:
+```
+[INFO] detected GPU: 0000:03:00.0
+[INFO] detected audio: 0000:04:00.0
+[INFO] CPU vendor: GenuineIntel -> params: intel_iommu=on iommu=pt
+DRY-RUN: sed -i 's/$/ intel_iommu=on iommu=pt/' "/etc/kernel/cmdline"
+DRY-RUN: proxmox-boot-tool refresh
+DRY-RUN: mkdir -p "/etc/modules-load.d" && printf 'vfio\nvfio_iommu_type1\nvfio_pci\n' > "/etc/modules-load.d/vfio.conf"
+DRY-RUN: mkdir -p "/etc/modprobe.d" && printf 'options vfio-pci ids=8086:56a5,8086:4f92\nsoftdep i915 pre: vfio-pci\nsoftdep xe pre: vfio-pci\nsoftdep snd_hda_intel pre: vfio-pci\n' > "/etc/modprobe.d/vfio.conf"
+DRY-RUN: update-initramfs -u -k all
+[WARN] reboot required for the new IOMMU/vfio configuration to take effect
+[INFO] after reboot, verify with: dmesg | grep -e DMAR -e IOMMU
+[INFO] after reboot, verify with: lspci -nnk -s 0000:03:00.0 (expect: Kernel driver in use: vfio-pci)
+```
+(Captured on an Intel CPU, systemd-boot host, with nothing configured yet.
+PCI addresses like `0000:03:00.0` are specific to this host's slot layout;
+yours may differ. If detection fails or finds more than one match, set
+`GPU_PCI=<address>` explicitly.)
+
+Apply, then reboot:
+
+```bash
+scripts/host/10-iommu-vfio.sh --apply
+reboot
+```
+
+After the reboot, confirm IOMMU is active:
+
+```bash
+dmesg | grep -e DMAR -e IOMMU
+```
+
+Expected output:
+```
+DMAR: IOMMU enabled
+DMAR: Intel(R) Virtualization Technology for Directed I/O
+```
+(Representative — exact lines vary by chipset.)
+
+Confirm the GPU is bound to `vfio-pci`:
+
+```bash
+lspci -nnk -s 0000:03:00.0
+```
+
+Expected output:
+```
+03:00.0 VGA compatible controller [0300]: Intel Corporation DG2 [Arc A380] [8086:56a5] (rev 05)
+	Subsystem: Intel Corporation Device [8086:1234]
+	Kernel driver in use: vfio-pci
+	Kernel modules: i915, xe
+```
+(Representative; `0000:03:00.0` is this host's address — substitute the
+address `10-iommu-vfio.sh` printed for yours.) The key line is
+`Kernel driver in use: vfio-pci`. If it still says `i915` or `xe`, see
+Troubleshooting below.
+
+## 4. Directory mapping and VM
+
+Creates the Proxmox directory mapping (`media-data` → `/tank/data`) if it
+doesn't already exist, then the VM: Debian 13 guest (q35/OVMF), the A380
+passed through, and `tank/data` attached as a virtiofs share.
+
+```bash
+scripts/host/20-create-vm.sh
+```
+
+Expected output:
+```
+[INFO] detected GPU: 0000:03:00.0
+[INFO] PVE version: 9.0
+DRY-RUN: pvesh create /cluster/mapping/dir --id media-data --map node=<your-node>,path=/tank/data
+DRY-RUN: qm create 200 --name media-01 --machine q35 --bios ovmf --cpu host --cores 8 --memory 20480 --balloon 0 --scsihw virtio-scsi-single --scsi0 local-zfs:64,iothread=1,discard=on,ssd=1 --efidisk0 local-zfs:1,efitype=4m,pre-enrolled-keys=0 --net0 virtio,bridge=vmbr0 --ide2 local:iso/debian-13-amd64-netinst.iso,media=cdrom --boot 'order=scsi0;ide2' --ostype l26 --agent enabled=1 --onboot 1
+DRY-RUN: qm set 200 --hostpci0 0000:03:00.0,pcie=1
+DRY-RUN: qm set 200 --virtiofs0 media-data,cache=auto
+[INFO] next: start VM 200, install Debian 13, then follow docs/runbooks/02-vm-bootstrap.md
+[INFO] fallback: if the guest's i915 fails to initialise, run:
+[INFO]   qm set 200 --vga none
+[INFO]   qm set 200 --hostpci0 0000:03:00.0,pcie=1,x-vga=1
+```
+(Captured on a fresh host with nothing created yet. `<your-node>` is this
+host's hostname — the script fills it in automatically with `hostname`.)
+
+If the ISO path shown by `pvesm list local --content iso` (Prerequisites)
+differs from the default, pass it explicitly:
+`ISO=local:iso/<file>.iso scripts/host/20-create-vm.sh`. On a host whose
+storage listing doesn't include `local-zfs`, also pass
+`VM_STORAGE=local-lvm` (or the correct storage name).
+
+Apply it:
+
+```bash
+scripts/host/20-create-vm.sh --apply
+```
+
+Confirm the VM's configuration:
+
+```bash
+qm config 200
+```
+
+Expected output:
+```
+agent: enabled=1
+bios: ovmf
+boot: order=scsi0;ide2
+cores: 8
+hostpci0: 0000:03:00.0,pcie=1
+machine: q35
+memory: 20480
+net0: virtio,bridge=vmbr0
+onboot: 1
+ostype: l26
+scsi0: local-zfs:vm-200-disk-0,iothread=1,discard=on,ssd=1
+virtiofs0: media-data,cache=auto
+```
+(Representative; `hostpci0` and `virtiofs0` are the lines that matter.)
+
+**GUI alternative** for step 4, if you prefer clicking through the web UI
+instead of running the script:
+1. **Datacenter → Directory Mappings → Add**, ID `media-data`, path
+   `/tank/data`, node = this host.
+2. Create the VM as usual (q35, OVMF/UEFI, Debian 13 guest OS type), then
+   **VM → Hardware → Add → PCI Device** for the A380 (`0000:03:00.0`),
+   and **VM → Hardware → Add → Virtiofs** pointing at the `media-data`
+   mapping.
+
+Start the VM and install Debian 13 (see `docs/runbooks/02-vm-bootstrap.md`).
+
+## 5. Troubleshooting
+
+**Checking IOMMU groups.** If passthrough fails or other devices misbehave,
+list the IOMMU groups to see what shares a group with the GPU (ideally,
+nothing that must stay on the host):
+
+```bash
+find /sys/kernel/iommu_groups/ -type l
+```
+Expected output:
+```
+/sys/kernel/iommu_groups/1/devices/0000:00:01.0
+/sys/kernel/iommu_groups/12/devices/0000:03:00.0
+/sys/kernel/iommu_groups/12/devices/0000:04:00.0
+```
+(Representative — look for the A380's PCI address, e.g. `0000:03:00.0`,
+among the group members.)
+
+**The GPU is still bound to `i915` or `xe` after reboot.** Re-check
+`lspci -nnk -s <addr>`. If `Kernel driver in use:` still shows `i915`/`xe`:
+- Confirm `/etc/modprobe.d/vfio.conf` has the `softdep i915 pre: vfio-pci`
+  and `softdep xe pre: vfio-pci` lines (both drivers exist on modern
+  kernels; DG2 cards can bind to either depending on kernel version).
+- Confirm `update-initramfs -u -k all` actually ran (it only runs when
+  `10-iommu-vfio.sh` detected a change — re-run it; if it reports
+  `no changes needed`, the files are already correct and the initramfs is
+  stale from before this run; force a rebuild manually).
+- Reboot again — `softdep` ordering only takes effect from the *next* boot
+  using the rebuilt initramfs.
+
+**The guest's i915 driver fails to initialize the GPU** (blank/black
+console, or `dmesg` in the guest shows i915 errors). This is the scenario
+`20-create-vm.sh` prints a fallback for. Switch the passthrough to
+"primary GPU" mode:
+```bash
+qm set 200 --vga none
+qm set 200 --hostpci0 0000:03:00.0,pcie=1,x-vga=1
+```
+`x-vga=1` tells Proxmox to treat the A380 as the VM's primary display
+adapter, which some Intel GPUs require to initialize correctly under KVM.
+
+**Resizable BAR not actually enabled**, despite the BIOS toggle. Confirm on
+the host:
+```bash
+lspci -vv -s 0000:03:00.0 | grep -i 'resizable'
+```
+Expected output:
+```
+		Resizable BAR: bit 0 (256MB) supported, bit 14 (256GB) enabled
+```
+(This is what a host with ReBAR correctly enabled prints.) If nothing
+prints, or the enabled bit doesn't match a supported size, re-check the
+BIOS setting — some boards only expose ReBAR when CSM/legacy boot is fully
+disabled.
+
+**Proxmox VE older than 8.4.** `20-create-vm.sh` refuses:
+```
+[ERROR] PVE 8.3 is older than the required 8.4 (pve-manager/8.3.1/...)
+```
+Directory mappings (used for the virtiofs share) require PVE 8.4+. Upgrade
+Proxmox, or use the NFS fallback below, which works on any PVE version with
+an NFS server enabled.
+
+## Fallback: NFS instead of virtiofs
+
+If virtiofs is unavailable (older PVE, or virtiofs proves unreliable on
+your hardware), export `tank/data` over NFS instead.
+
+On the Proxmox host:
+```bash
+apt install nfs-kernel-server
+```
+Add a line to `/etc/exports`, restricted to the VM's IP address (replace
+`10.0.0.50` with the actual VM IP):
+```
+/tank/data 10.0.0.50(rw,sync,no_subtree_check,no_root_squash)
+```
+Then:
+```bash
+exportfs -ra
+systemctl enable --now nfs-server
+```
+
+In the VM, replace the virtiofs fstab line with an NFS one (matching the
+export above; replace `10.0.0.1` with the host's IP):
+```
+10.0.0.1:/tank/data /data nfs defaults,nofail 0 0
+```
+
+Because this changes the mount type, tell `scripts/vm/verify.sh` to accept
+it: run it as `ALLOW_NFS=1 scripts/vm/verify.sh` instead of plain
+`scripts/vm/verify.sh`. Without `ALLOW_NFS=1`, the `data-mount` check only
+accepts `virtiofs` and will FAIL on an NFS mount.
