@@ -21,5 +21,8 @@
 - Phase 1 plan critique: REWORK, then revised (5 critical + 6 warnings fixed)
 - Owner checkpoint (after build): run `scripts/vm/verify.sh` on the real VM → `RESULT: 10 pass, 0 fail, 0 skip`
 
+## GitHub
+- Phase 1 issue: #1 (https://github.com/DeanItServices/home-media-server/issues/1)
+
 ## Next Action
 Run `/legion:build` to execute Phase 1: Host & Repo Foundation
