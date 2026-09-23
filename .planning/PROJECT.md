@@ -42,6 +42,7 @@ Family members request a title in one place, it appears automatically at the rig
 - Off-site backup of the media files themselves (they can be re-acquired from the *arr databases)
 
 ## Constraints
+- The media `/data` pool is an **existing ZFS pool on SSDs**, migrated from the old server (exported there, imported on a fresh Proxmox install). It holds a media library that must be kept and adopted, not re-downloaded. SSD capacity is limited, so AV1 conversion matters.
 - Dynamic public IP, so DDNS is required. Not behind CGNAT. 1 Gbps symmetrical fiber.
 - Only ports 443 and 32400 are forwarded. No Cloudflare proxy (orange cloud) on media hostnames.
 - Secrets are never committed; image tags are pinned, never `latest`.
@@ -66,6 +67,7 @@ Family members request a title in one place, it appears automatically at the rig
 | Primary server | Owner's Plex Pass covers family remote streaming | Plex primary, Jellyfin backup |
 | 4K/anime | Keep family on appropriate quality; stay manageable | Separate 4K instances; anime via root folders and profiles |
 | AV1 | Save space; family devices support AV1 | FileFlows on all libraries including 4K; HDR10 kept, DV dropped |
+| Media pool | Owner is moving SSDs with an existing pool and library into the new server | Import (optionally renamed to `tank`); consolidate into a single `<pool>/data` dataset; `05-import-pool.sh` + runbook 01 §1a |
 | Execution mode | Host, router and GPU steps are high-stakes | Guided |
 | Planning depth | Design already defines 6 phases | Standard |
 | Cost profile | default | Balanced |

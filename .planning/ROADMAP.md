@@ -2,7 +2,7 @@
 
 ## Phases
 
-- [x] Phase 1: Host & Repo Foundation (4 plans)
+- [ ] Phase 1: Host & Repo Foundation (5 plans)
 - [ ] Phase 2: Core Media Automation (3 plans)
 - [ ] Phase 3: Edge & Secure Access (3 plans)
 - [ ] Phase 4: Quality Automation & AV1 (3 plans)
@@ -21,7 +21,7 @@
 - [ ] The host runbook covers ZFS datasets, IOMMU/vfio, and VM creation (q35/OVMF, ReBAR) with A380 passthrough
 - [ ] Inside the VM, `vainfo` on `/dev/dri/renderD128` lists AV1/HEVC/H.264 encode entrypoints
 - [ ] `/data` is mounted via virtiofs, `scripts/mkdirs.sh` creates the TRaSH tree, and a hardlink test between `/data/usenet` and `/data/media` succeeds
-**Plans**: 4 (planned: 01-01..01-04, 3 waves)
+**Plans**: 5 (01-01..01-04 in 3 waves, plus 01-05 for the migrated SSD pool)
 
 ### Phase 2: Core Media Automation
 **Goal**: Complete the request → download → import → play loop on the LAN, with hardware transcoding.
@@ -32,6 +32,7 @@
 - [ ] Prowlarr syncs its indexers to all 5 *arr instances (checked via API)
 - [ ] A test request in Seerr (HD, 4K, anime) lands in the correct instance, root folder and SAB category, and is imported as a hardlink (same inode)
 - [ ] Plex and Jellyfin dashboards show hardware transcoding (hw) on a forced transcode
+- [ ] The existing library migrated from the old SSD pool is adopted by Sonarr/Radarr/Lidarr (root folders under `/data/media`) with no re-downloads, and appears in Plex and Jellyfin
 **Plans**: 3
 
 ### Phase 3: Edge & Secure Access
@@ -86,7 +87,7 @@
 
 | Phase | Plans | Completed | Status |
 |-------|-------|-----------|--------|
-| 1. Host & Repo Foundation | 4 | 4 | Complete (pending owner hardware check) |
+| 1. Host & Repo Foundation | 5 | 4 | In progress (01-05 pool migration) |
 | 2. Core Media Automation | 3 | 0 | Not started |
 | 3. Edge & Secure Access | 3 | 0 | Not started |
 | 4. Quality Automation & AV1 | 3 | 0 | Not started |
