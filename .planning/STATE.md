@@ -1,13 +1,13 @@
 # Project State
 
 ## Current Position
-- **Phase**: 0 of 6 (not started)
-- **Status**: Initialized — ready for `/legion:plan 1`
-- **Last Activity**: Project initialization (2026-09-23)
+- **Phase**: 1 of 6 (planned)
+- **Status**: Phase 1 planned — 4 plans across 3 waves
+- **Last Activity**: Phase 1 planning (2026-09-23)
 
 ## Progress
 ```
-[·················] 0% — 0/17 plans complete
+[··················] 0% — 0/18 plans complete
 ```
 
 ## Recent Decisions
@@ -16,6 +16,10 @@
 - Cost profile: Balanced
 - Design source: `.planning/explorations/2026-09-23-home-media-server-design.md`
 - Codebase map: skipped (greenfield, no source code)
+- Phase 1 architecture: Hybrid (empty stacks, `_common.yaml` via `extends`, external `proxy` network, host/vm script split, dry-run-by-default scripts, `verify.sh` acceptance gate, CI lint)
+- Phase 1 spec: `.planning/specs/01-host-repo-foundation-spec.md` (critique PASS after revisions)
+- Phase 1 plan critique: REWORK, then revised (5 critical + 6 warnings fixed)
+- Owner checkpoint (after build): run `scripts/vm/verify.sh` on the real VM → `RESULT: 10 pass, 0 fail, 0 skip`
 
 ## Next Action
-Run `/legion:plan 1` to begin Phase 1: Host & Repo Foundation
+Run `/legion:build` to execute Phase 1: Host & Repo Foundation

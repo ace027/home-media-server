@@ -84,6 +84,8 @@ CI:           lint.yml → compose config · shellcheck · yamllint · check-pin
 - VM storage and network: `VM_STORAGE=local-zfs`, `VM_DISK_GB=64`, `VM_BRIDGE=vmbr0`, `ISO=local:iso/debian-13-amd64-netinst.iso`.
 - GPU and share: `GPU_PCI` (auto-detected), `DIR_MAPPING_ID=media-data`.
 
+**verify.sh variables:** `DATA_ROOT=/data`, `SKIP_HW=0`, `RENDER_NODE=/dev/dri/renderD128`, `ALLOW_NFS=0` (when 1, `data-mount` also accepts nfs/nfs4 for the runbook's NFS fallback).
+
 **VM script variables:** `DIR_MAPPING_ID=media-data`, `DATA_ROOT=/data`, `APPDATA_ROOT=/opt/appdata`, `MEDIA_USER` (defaults to `SUDO_USER`), PUID/PGID from `.env`.
 
 **verify.sh output:**
@@ -151,6 +153,8 @@ CI:           lint.yml → compose config · shellcheck · yamllint · check-pin
 | No or several A380s found | `10-iommu-vfio.sh` exits 1 and asks for `GPU_PCI` | Covered in runbook |
 | The host's i915/xe driver claims the A380 before vfio | `options vfio-pci ids=…` + softdeps in `/etc/modprobe.d/vfio.conf`, then `update-initramfs -u -k all`; runbook check shows `vfio-pci` in use | Runbook expected output |
 | i915 fails to initialize inside the VM (per owner reports) | Runbook fallback: set `vga: none` and `x-vga=1` on hostpci0, and check ReBAR is enabled in BIOS | `verify.sh gpu` FAIL detail points to the runbook section |
+| `VM_STORAGE` or the ISO is missing | `20-create-vm.sh` checks `pvesm status -storage` and `pvesm list <store> --content iso` and dies with the override hint (`VM_STORAGE=local-lvm`, `ISO=local:iso/<file>`) | Stub negative tests |
+| Docker daemon hangs | Every docker call in `verify.sh` is wrapped in `timeout`; a timeout counts as unreachable | verify.sh |
 | VMID already exists | `20-create-vm.sh` exits 1 without changes | Guarded by `qm status` |
 | virtiofs not mounted at boot | fstab `nofail` lets the VM boot; `verify.sh data-mount` FAIL (`findmnt -t virtiofs /data` empty) | verify.sh |
 | Hardlink fails (cross-device) | `verify.sh hardlink` FAIL, naming the two paths and inode numbers | Sandbox test |
@@ -275,6 +279,7 @@ CI:           lint.yml → compose config · shellcheck · yamllint · check-pin
 | 4 | Open Questions | Added the pvesh mapping syntax with a check and GUI fallback; kept `--virtiofs0 <id>,cache=auto` (`dirid` is the default key in the PVE `virtiofs[n]` property) | Critique #4 (MED) |
 | 5 | Failure Modes | Docker repo codename check with a `DOCKER_CODENAME` override; VAAPI driver-version troubleshooting | Critique #5 (MED) and the assumption on iHD version |
 | 7 | Deliverables → Host scripts | hostpci0 passes the GPU function only; audio (separate bus on Arc) is vfio-bound but not passed through. Added `SYSROOT` test prefix and stub-tool testing | Planning review: Arc audio is not a function of the GPU device |
+| 8 | Failure Modes, host/VM scripts, plans 01-02..01-04 | Plan critique fixes: `.env` before the verify.sh compose check; re-run (case c) test; ZFS 'exists' test; `pvesm` storage and ISO preconditions; standalone virtiofs hardlink acceptance row; `timeout` on docker calls; executable-bit check; `id media` check; `ALLOW_NFS` declared in the spec; curl retry | Plan critique (pre-mortem + assumption hunt), 5 critical + 6 warnings |
 | 6 | — | **Rejected:** efidisk `:1` stays. The PVE docs use `<storage>:1,efitype=4m` in `qm set -efidisk0`; the size is ignored and PVE allocates the correct EFI vars size | Critique #6 (LOW) is incorrect |
 
 Critique verdict after revisions: **PASS**. All 5 CRITICAL/HIGH/MED findings resolved; 1 LOW rejected with evidence.

@@ -2,7 +2,7 @@
 
 ## Phases
 
-- [ ] Phase 1: Host & Repo Foundation (3 plans)
+- [ ] Phase 1: Host & Repo Foundation (4 plans)
 - [ ] Phase 2: Core Media Automation (3 plans)
 - [ ] Phase 3: Edge & Secure Access (3 plans)
 - [ ] Phase 4: Quality Automation & AV1 (3 plans)
@@ -21,7 +21,7 @@
 - [ ] The host runbook covers ZFS datasets, IOMMU/vfio, and VM creation (q35/OVMF, ReBAR) with A380 passthrough
 - [ ] Inside the VM, `vainfo` on `/dev/dri/renderD128` lists AV1/HEVC/H.264 encode entrypoints
 - [ ] `/data` is mounted via virtiofs, `scripts/mkdirs.sh` creates the TRaSH tree, and a hardlink test between `/data/usenet` and `/data/media` succeeds
-**Plans**: 3
+**Plans**: 4 (planned: 01-01..01-04, 3 waves)
 
 ### Phase 2: Core Media Automation
 **Goal**: Complete the request → download → import → play loop on the LAN, with hardware transcoding.
@@ -86,7 +86,7 @@
 
 | Phase | Plans | Completed | Status |
 |-------|-------|-----------|--------|
-| 1. Host & Repo Foundation | 3 | 0 | Not started |
+| 1. Host & Repo Foundation | 4 | 0 | Planned |
 | 2. Core Media Automation | 3 | 0 | Not started |
 | 3. Edge & Secure Access | 3 | 0 | Not started |
 | 4. Quality Automation & AV1 | 3 | 0 | Not started |
