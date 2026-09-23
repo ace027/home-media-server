@@ -1,0 +1,7 @@
+# Transcode stack — services added in Phase 4 (fileflows)
+# New services: extends: {file: _common.yaml, service: base} and pin image tags (never :latest).
+services: {}
+networks:
+  proxy:
+    name: proxy
+    external: true

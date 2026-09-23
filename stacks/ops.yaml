@@ -1,0 +1,7 @@
+# Ops stack — services added in Phase 5 (homepage, uptime-kuma, notifiarr, diun, backrest, dozzle)
+# New services: extends: {file: _common.yaml, service: base} and pin image tags (never :latest).
+services: {}
+networks:
+  proxy:
+    name: proxy
+    external: true
