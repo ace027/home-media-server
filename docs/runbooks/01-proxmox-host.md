@@ -58,6 +58,171 @@ Before touching software, set these in the host's BIOS/UEFI setup:
 
 Save, reboot into Proxmox, and continue below.
 
+## 1a. Migrating an existing pool
+
+Skip this section if `tank` is a fresh pool created from scratch (`## 2. ZFS
+datasets` below creates it). Follow it instead if `/data` will be an
+**existing** ZFS pool, on SSDs, moved from another (still-running) server
+into this Proxmox host, with a media library on it that must be kept.
+Nothing in this procedure destroys or overwrites data by default: import
+never uses `-f` unless you explicitly opt in, and no dataset is renamed or
+consolidated without you naming it.
+
+### Before moving the drives (old server)
+
+1. Stop anything using the pool (Plex, *arr apps, SMB/NFS shares, etc.).
+2. Confirm the pool is healthy:
+   ```bash
+   zpool status <pool>
+   ```
+   Expected output: `state: ONLINE` with no `DEGRADED`/`FAULTED` vdevs.
+3. Record the current layout, for reference after the move:
+   ```bash
+   zfs list -r -o name,used,avail,mountpoint,recordsize <pool>
+   ```
+4. Export the pool so the new host can import it cleanly:
+   ```bash
+   zpool export <pool>
+   ```
+   Expected output: the pool disappears from `zpool list`.
+5. Physically move the SSDs to the new Proxmox host.
+
+### Import (new host)
+
+List what's importable, to confirm the pool is visible:
+```bash
+zpool import
+```
+
+Dry-run the import script, from the repo root on the new host:
+```bash
+cd /root/home-media-server
+SOURCE_POOL=<old-name> scripts/host/05-import-pool.sh
+```
+Expected output (stub-captured; real output additionally lists the
+inventory once you re-run with `--apply`):
+```
+DRY-RUN: zpool import <old-name> tank
+[INFO] re-run after import (with --apply) to inventory the pool
+```
+(If `<old-name>` already equals `tank`, the script omits the trailing
+rename argument: `DRY-RUN: zpool import tank`.)
+
+Review it, then apply:
+```bash
+SOURCE_POOL=<old-name> scripts/host/05-import-pool.sh --apply
+```
+
+This project's convention is to rename the pool to `tank` on import (as
+above) so every other script's `POOL=tank` default just works. If you'd
+rather keep the pool's original name, pass `POOL=<old-name>` to every
+script from here on (including `00-zfs-datasets.sh` and `20-create-vm.sh`)
+instead of renaming.
+
+`FORCE_IMPORT=1` passes `-f` to `zpool import`, needed only if ZFS reports
+the pool as still "in use by another system" (e.g. the old server wasn't
+cleanly shut down, or you skipped `zpool export`). It is only safe once the
+old server is definitely no longer using the pool — importing a pool that's
+still live elsewhere can corrupt it.
+
+### Do not `zpool upgrade`
+
+`05-import-pool.sh` inventories the pool and warns about this on every run.
+Do not run `zpool upgrade <pool>` until you are committed to the new
+server — upgrading the on-disk format makes the pool unimportable by an
+older ZFS version, so you lose the option to move the drives back.
+
+### Consolidation decision tree
+
+The *arr apps import downloads into the media library with hardlinks, and
+hardlinks cannot cross ZFS dataset boundaries — so everything under `/data`
+must end up as **one** dataset, `tank/data`, with no children. Which path
+below applies depends on how the old pool was laid out.
+
+**(a) All media is already in one dataset, with no children.** Rename it
+directly — instant, uses no extra space:
+```bash
+MEDIA_DATASET=<pool>/<dataset> scripts/host/05-import-pool.sh --apply
+```
+`05-import-pool.sh` refuses if `MEDIA_DATASET` isn't a direct child of the
+pool, or has children of its own — those need path (b)/(c) first.
+
+**(b) Media is split across several datasets.** Rename the largest to
+`tank/data` as in (a) (`MEDIA_DATASET=<pool>/<largest> ... --apply`). For
+each remaining dataset:
+1. Check free space first — `tank/data` must have enough room for what
+   you're about to copy into it:
+   ```bash
+   zfs list -o name,avail tank/data <pool>/<other>
+   ```
+2. Copy, preserving hardlinks/ACLs/xattrs and showing progress:
+   ```bash
+   rsync -aHAX --info=progress2 /<pool>/<other>/ /tank/data/media/<category>/
+   ```
+3. Verify before touching the source: compare file counts and `du` between
+   source and target, and spot-check a few titles play back correctly.
+4. Don't delete the source yet. Snapshots can't outlive their dataset:
+   destroying a dataset also destroys its snapshots, and plain `zfs destroy`
+   refuses while any exist. So keep the source read-only until the library
+   is confirmed working in Phase 2:
+   ```bash
+   zfs snapshot <pool>/<other>@pre-consolidate
+   zfs set readonly=on <pool>/<other>
+   ```
+   Once Sonarr/Radarr/Lidarr and Plex show everything correctly, free the
+   space (this deletes the dataset **and** its snapshots, irreversibly):
+   ```bash
+   zfs destroy -r <pool>/<other>
+   ```
+
+SSD capacity is typically far smaller than the library on it, so an
+in-place `rsync` copy that needs the source and target to coexist may not
+fit — check free space (step 1) before starting, and consider consolidating
+one dataset at a time. AV1 re-encoding (Phase 4, via FileFlows) reclaims a
+large amount of space once the library is imported, but don't count on it
+during this migration.
+
+**(c) `tank/data` already exists with child datasets.** Same procedure as
+(b): `05-import-pool.sh` refuses to touch `tank/data` while it has
+children, so copy each child's contents up into the parent with `rsync`,
+verify, then destroy the (now-empty of purpose) child dataset.
+
+### Reorganize into the TRaSH layout
+
+Once everything is one dataset, arrange it to match the layout
+`scripts/mkdirs.sh` creates (see `docs/architecture.md` → Storage layout),
+inside `/tank/data`:
+```bash
+mkdir -p /tank/data/media/{movies,movies-4k,tv,tv-4k,anime-tv,anime-movies,music}
+```
+Then `mv` the existing folders into place, e.g.:
+```bash
+mv /tank/data/movies/*      /tank/data/media/movies/
+mv /tank/data/tv-4k/*       /tank/data/media/tv-4k/
+mv /tank/data/anime/movies/* /tank/data/media/anime-movies/
+mv /tank/data/anime/*.mkv   /tank/data/media/anime-tv/   # adjust to your actual layout
+mv /tank/data/music/*       /tank/data/media/music/
+```
+`mv` is instant within one dataset (no data is copied). Once the library is
+under `media/<category>/`, Phase 2 imports it into Sonarr/Radarr/Lidarr as
+an **existing** library — no re-downloads.
+
+### Ownership
+
+Dry-run the ownership report first:
+```bash
+scripts/host/05-import-pool.sh
+```
+Then fix it, if needed:
+```bash
+FIX_OWNERSHIP=1 scripts/host/05-import-pool.sh --apply
+```
+
+Continue with `## 2. ZFS datasets` below — `00-zfs-datasets.sh` detects
+that `tank/data` already exists and sets its properties
+(`recordsize=1M compression=lz4 atime=off xattr=sa`) on it instead of
+creating it.
+
 ## 2. ZFS datasets
 
 Creates `tank/data` (recordsize=1M, compression=lz4, atime=off, xattr=sa —

@@ -2,12 +2,12 @@
 
 ## Current Position
 - **Phase**: 1 of 6 (executed, pending review)
-- **Status**: Phase 1 complete — all 4 plans executed successfully
+- **Status**: Phase 1 complete — all 5 plans executed successfully (01-05 added for the migrated SSD pool)
 - **Last Activity**: Phase 1 execution (2026-09-23)
 
 ## Progress
 ```
-[####··············] 22% — 4/18 plans complete
+[#####·············] 26% — 5/19 plans complete
 ```
 
 ## Recent Decisions
@@ -28,4 +28,4 @@
 ## Next Action
 Run `/legion:review` to verify Phase 1: Host & Repo Foundation
 
-Owner action (outside the repo): follow `docs/runbooks/01-proxmox-host.md` and `docs/runbooks/02-vm-bootstrap.md`, then record `scripts/vm/verify.sh` results in the Acceptance record.
+Owner action (outside the repo): export the SSD pool on the old server, then follow `docs/runbooks/01-proxmox-host.md` (starting at §1a) and `docs/runbooks/02-vm-bootstrap.md`, then record `scripts/vm/verify.sh` results in the Acceptance record.

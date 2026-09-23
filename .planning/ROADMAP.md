@@ -2,7 +2,7 @@
 
 ## Phases
 
-- [ ] Phase 1: Host & Repo Foundation (5 plans)
+- [x] Phase 1: Host & Repo Foundation (5 plans)
 - [ ] Phase 2: Core Media Automation (3 plans)
 - [ ] Phase 3: Edge & Secure Access (3 plans)
 - [ ] Phase 4: Quality Automation & AV1 (3 plans)
@@ -87,7 +87,7 @@
 
 | Phase | Plans | Completed | Status |
 |-------|-------|-----------|--------|
-| 1. Host & Repo Foundation | 5 | 4 | In progress (01-05 pool migration) |
+| 1. Host & Repo Foundation | 5 | 5 | Complete (pending owner hardware check) |
 | 2. Core Media Automation | 3 | 0 | Not started |
 | 3. Edge & Secure Access | 3 | 0 | Not started |
 | 4. Quality Automation & AV1 | 3 | 0 | Not started |

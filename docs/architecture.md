@@ -52,6 +52,14 @@ The ZFS pool `tank` holds two datasets on the Proxmox host:
 - `tank/data` (recordsize=1M, compression=lz4, atime=off, xattr=sa) — a single dataset with **no child datasets**. This is required because hardlinks cannot cross ZFS dataset boundaries, and the *arr apps import downloads into the media library with a hardlink or atomic move. Any subdirectory work happens inside this one dataset, never as a separate dataset.
 - `tank/backups` (compression=zstd) — target for `vzdump`.
 
+The media pool is not created from scratch: it is an **existing** ZFS pool
+on SSDs, migrated (via `zpool export`/`zpool import`) from an old server
+that is still running, and it already holds a media library that must be
+kept. See runbook 01, section 1a for the import, ownership and
+consolidation procedure. Whatever its origin, it must still end up as a
+single `tank/data` dataset with no children — the requirement below is
+unchanged by the migration.
+
 `tank/data` is exposed to the VM through a Proxmox directory mapping (`media-data` → `/tank/data`), attached to the VM as a `virtiofs0` share, and mounted inside the VM at `/data` via fstab (`media-data /data virtiofs defaults,nofail 0 0`). An NFS export is documented as a fallback in the host runbook if virtiofs is unavailable.
 
 `APPDATA_ROOT` (`/opt/appdata` by default) lives on the VM's local SSD, never on `/data`, because the *arr apps, Plex and other services store SQLite databases there and network/ZFS-backed storage is unsuitable for that access pattern.

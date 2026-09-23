@@ -45,7 +45,7 @@ EOF
 parse_common_args "$@"
 load_env
 require_root
-require_cmd qm pvesh pveversion pvesm lspci
+require_cmd qm pvesh pveversion pvesm lspci zfs
 
 # --- 1: detect the GPU (unless GPU_PCI is set) --------------------------
 if [[ -z "$GPU_PCI" ]]; then
@@ -89,8 +89,13 @@ if qm status "$VMID" >/dev/null 2>&1; then
 fi
 
 # --- 4: directory mapping --------------------------------------------------
+mp="$(zfs get -H -o value mountpoint "$POOL/data" 2>/dev/null)" || die "dataset $POOL/data not found; run 05-import-pool.sh / 00-zfs-datasets.sh first"
+if [[ "$mp" == "none" || "$mp" == "legacy" ]]; then
+  die "dataset $POOL/data not found; run 05-import-pool.sh / 00-zfs-datasets.sh first"
+fi
+
 if ! pvesh get "/cluster/mapping/dir/$DIR_MAPPING_ID" >/dev/null 2>&1; then
-  run pvesh create /cluster/mapping/dir --id "$DIR_MAPPING_ID" --map "node=$(hostname),path=/$POOL/data"
+  run pvesh create /cluster/mapping/dir --id "$DIR_MAPPING_ID" --map "node=$(hostname),path=$mp"
 fi
 
 # --- 5: create the VM -------------------------------------------------------

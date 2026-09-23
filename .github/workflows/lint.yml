@@ -51,6 +51,7 @@ jobs:
         run: |
           d=$(mktemp -d)
           scripts/ci/make-host-stubs.sh "$d/bin"
+          SOURCE_POOL=oldpool PATH="$d/bin:$PATH" scripts/host/05-import-pool.sh
           PATH="$d/bin:$PATH" scripts/host/00-zfs-datasets.sh
           PATH="$d/bin:$PATH" scripts/host/20-create-vm.sh
 

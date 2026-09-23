@@ -36,6 +36,15 @@ if zfs list -H -o name "$POOL/data" >/dev/null 2>&1; then
     exit 1
   fi
   log_info "$POOL/data exists"
+  for prop_target in "recordsize 1M" "compression lz4" "atime off" "xattr sa"; do
+    prop="${prop_target%% *}"
+    target="${prop_target#* }"
+    current="$(zfs get -H -o value "$prop" "$POOL/data" 2>/dev/null || true)"
+    if [[ "$current" != "$target" ]]; then
+      run zfs set "$prop=$target" "$POOL/data"
+    fi
+  done
+  log_info "recordsize applies to newly written data only; existing files keep their current recordsize"
 else
   run zfs create -o recordsize=1M -o compression=lz4 -o atime=off -o xattr=sa "$POOL/data"
 fi

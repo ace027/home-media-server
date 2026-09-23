@@ -14,10 +14,10 @@ exercised without real Proxmox/ZFS hardware.
 
 Usage: make-host-stubs.sh <dir> [--help]
 
-Creates <dir> and writes executable stub commands into it: zfs, lspci, qm,
-pvesh, pveversion, hostname, pvesm. Each stub appends its invocation
-(command name + args) to <dir>/calls.log. Prepend <dir> to PATH before
-running a host script against these stubs.
+Creates <dir> and writes executable stub commands into it: zfs, zpool,
+lspci, qm, pvesh, pveversion, hostname, pvesm. Each stub appends its
+invocation (command name + args) to <dir>/calls.log. Prepend <dir> to PATH
+before running a host script against these stubs.
 EOF
 }
 
@@ -57,6 +57,43 @@ case "$*" in
     exit 1
     ;;
   "list -H -r -o name tank/data")
+    exit 0
+    ;;
+  "get -H -o value mountpoint tank/data")
+    echo "/tank/data"
+    exit 0
+    ;;
+  "get -H -o value recordsize tank/data")
+    echo "128K"
+    exit 0
+    ;;
+  "get -H -o value compression tank/data")
+    echo "lz4"
+    exit 0
+    ;;
+  "get -H -o value atime tank/data")
+    echo "on"
+    exit 0
+    ;;
+  "get -H -o value xattr tank/data")
+    echo "sa"
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+'
+
+write_stub zpool '
+case "$*" in
+  "list -H -o name tank")
+    exit 1
+    ;;
+  "import")
+    echo "   pool: oldpool"
+    echo "     id: 1234567890"
+    echo "  state: ONLINE"
     exit 0
     ;;
   *)
