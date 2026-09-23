@@ -1,13 +1,13 @@
 # Project State
 
 ## Current Position
-- **Phase**: 1 of 6 (planned)
-- **Status**: Phase 1 executing — wave 2 complete (3/4 plans)
-- **Last Activity**: Phase 1 wave 2 execution (2026-09-23)
+- **Phase**: 1 of 6 (executed, pending review)
+- **Status**: Phase 1 complete — all 4 plans executed successfully
+- **Last Activity**: Phase 1 execution (2026-09-23)
 
 ## Progress
 ```
-[###···············] 17% — 3/18 plans complete
+[####··············] 22% — 4/18 plans complete
 ```
 
 ## Recent Decisions
@@ -25,4 +25,6 @@
 - Phase 1 issue: #1 (https://github.com/DeanItServices/home-media-server/issues/1)
 
 ## Next Action
-Run `/legion:build` to execute Phase 1: Host & Repo Foundation
+Run `/legion:review` to verify Phase 1: Host & Repo Foundation
+
+Owner action (outside the repo): follow `docs/runbooks/01-proxmox-host.md` and `docs/runbooks/02-vm-bootstrap.md`, then record `scripts/vm/verify.sh` results in the Acceptance record.
