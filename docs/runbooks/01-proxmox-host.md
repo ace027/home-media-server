@@ -187,6 +187,35 @@ during this migration.
 children, so copy each child's contents up into the parent with `rsync`,
 verify, then destroy the (now-empty of purpose) child dataset.
 
+**(d) Media lives directly in the pool's root dataset** (e.g. `zfs list -r tank`
+shows only `tank`, with files under `/tank/<folders>`). This is the owner's
+layout: `tank`, 1.14T used, 9.56T free. A root dataset can't be renamed into
+`tank/data`, so the library has to be **copied** across the dataset boundary
+once. There's plenty of room, and the copy picks up `tank/data`'s 1M recordsize.
+1. Import and inventory (no rename needed, since the pool is already named `tank`):
+   ```bash
+   scripts/host/05-import-pool.sh            # dry-run
+   scripts/host/05-import-pool.sh --apply
+   zfs snapshot tank@pre-migration           # safety net
+   ```
+2. Create the dataset (section 2): `scripts/host/00-zfs-datasets.sh --apply`.
+3. Copy each top-level folder from `ls /tank` into its category (skip
+   `data/` and `backups/`):
+   ```bash
+   mkdir -p /tank/data/media/{movies,movies-4k,tv,tv-4k,anime-tv,anime-movies,music}
+   rsync -aHAX --info=progress2 /tank/<Movies>/ /tank/data/media/movies/
+   rsync -aHAX --info=progress2 /tank/<TV>/     /tank/data/media/tv/
+   ```
+4. Verify each copy before removing anything:
+   ```bash
+   find /tank/<Movies> -type f | wc -l; find /tank/data/media/movies -type f | wc -l
+   du -sh /tank/<Movies> /tank/data/media/movies
+   ```
+   Then delete the original folders (never `/tank/data` or `/tank/backups`).
+   The space isn't freed until the snapshot is removed.
+5. After Phase 2 confirms the library in Sonarr/Radarr/Lidarr and Plex:
+   `zfs destroy tank@pre-migration`. This is irreversible and frees the old copy's space.
+
 ### Reorganize into the TRaSH layout
 
 Once everything is one dataset, arrange it to match the layout
