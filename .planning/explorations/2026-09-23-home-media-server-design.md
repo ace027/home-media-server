@@ -29,11 +29,11 @@ Clarifications captured during exploration:
   - Because the owner has Plex Pass, **Plex is the primary family client** and Jellyfin is the fallback. Jellyfin is also a Plex-independent option if Plex policy changes again.
   - With Usenet only there is no seeding, so FileFlows can replace files in place without breaking a torrent. The only hardlink concern is transient.
   - Re-encoding to AV1 conflicts with TRaSH/Recyclarr custom formats, which may score AV1 negatively. That can cause **upgrade loops**, where the *arr apps re-download a file FileFlows just shrank. Profiles must neutralize this (see Technical Direction).
-  - Older clients (some Roku models, older Fire TV sticks, older smart TVs) cannot decode AV1. Plex or Jellyfin will then transcode AV1 to H.264 on the A380. That is fine for 1-5 users but uses the GPU.
+  - Family TVs are moving to AV1-capable hardware (e.g. Google TV Streamer), so AV1 files will mostly **direct play**. The A380 then only transcodes for the occasional browser, older phone or travel device, which is well within its capacity.
   - One A380 is shared by Plex, Jellyfin and FileFlows. FileFlows should run in an off-peak window with limited concurrency.
 - Assumptions:
-  - The ISP does not use CGNAT, so ports 443 and 32400 can be forwarded. If this is wrong, add a VPS/Pangolin tunnel (see Open Questions).
-  - Upload bandwidth is at least 20 Mbps, enough for 2-3 concurrent remote 1080p streams.
+  - **Confirmed:** not behind CGNAT, so ports 443 and 32400 can be forwarded directly.
+  - **Confirmed:** 1 Gbps symmetrical fiber. Upload is not a constraint for 1-5 users, even with several 4K direct-play streams (about 40-80 Mbps each).
   - The Proxmox host supports IOMMU and Resizable BAR, which Arc performance depends on.
   - A domain is registered or will be registered on Cloudflare.
 
@@ -76,7 +76,7 @@ Why this approach: it fits the 1-5 user scale on a single host. The split files 
 - [ ] **Quality automation:** Recyclarr (TRaSH profiles for HD, 4K and anime, with AV1 scoring neutralized), Bazarr (subtitles for HD Sonarr/Radarr), Maintainerr (Plex-rule cleanup, dry-run first).
 - [ ] **Monitoring & alerts:** Homepage dashboard, Uptime Kuma, Notifiarr or Discord webhooks from the *arr apps, SAB, Seerr, Uptime Kuma and Diun.
 - [ ] **Backups & updates:** vzdump to PBS for the VM, and Backrest/restic for `appdata` plus the ZFS snapshot schedule. Diun notifies about new images; updates are applied manually with pinned tags. Includes one documented restore drill.
-- [ ] **Family onboarding:** Authentik invite flow, Plex library shares (4K libraries not shared remotely), and a one-page family guide ("install Plex, sign in, request in Seerr").
+- [ ] **Family onboarding:** Authentik invite flow, Plex library shares (4K libraries shared only with users on 4K/HDR-capable devices; 4K requests still need admin approval), and a one-page family guide ("install Plex, sign in, request in Seerr").
 
 ### Later
 - [ ] Dedicated anime Sonarr/Radarr instances if shared-instance profiles get messy.
@@ -84,7 +84,6 @@ Why this approach: it fits the 1-5 user scale on a single host. The split files 
 - [ ] Kometa (collections and overlays) for Plex.
 - [ ] Prometheus + Grafana + exporters (ZFS, GPU, *arr).
 - [ ] Ansible playbook for VM provisioning (drivers, mounts, Docker).
-- [ ] Pangolin/VPS tunnel as a fallback if the ISP moves to CGNAT.
 - [ ] Books/audiobooks (Audiobookshelf + a Readarr alternative).
 - [ ] Live TV/DVR (HDHomeRun).
 - [ ] Jellyfin-side request parity and Jellyfin family accounts via Authentik OIDC auto-provisioning.
@@ -155,7 +154,7 @@ Image tags are pinned (no `latest`). Secrets go in `secrets/` using Docker secre
 
 **GPU sharing (Arc A380)**
 - `/dev/dri` is passed to Plex, Jellyfin and the FileFlows node. The container user belongs to the `render` group.
-- Plex: HW transcode on, HEVC decode on, remote stream bitrate capped at 8-12 Mbps per user.
+- Plex: HW transcode on, HEVC decode on, remote quality set to Original/maximum with direct play preferred. Set a generous safety cap on the internet upload limit (e.g. 400 Mbps total), not a per-user 1080p cap.
 - Jellyfin: QSV, with low-power H.264/HEVC/AV1 encoding and tone mapping on.
 - FileFlows: 1 GPU runner, schedule 01:00-07:00. Flow: skip if already AV1 or under a size threshold, then QSV AV1 encode (ICQ/global quality tuned per resolution), keep all audio and subtitles, output MKV, reject the result if it's not at least 15-20% smaller, replace the original, then trigger a rescan in Sonarr/Radarr/Plex/Jellyfin.
 
@@ -172,10 +171,10 @@ Image tags are pinned (no `latest`). Secrets go in `secrets/` using Docker secre
 - Media is **not** backed up off-site; the *arr databases are enough to re-acquire it.
 
 ## Open Questions
-- **CGNAT check:** confirm the WAN IP on the router matches the public IP. If it doesn't, add the Pangolin/VPS tunnel from Later to the MVP. Resolve during the edge phase.
 - **AV1 on 4K content:** re-encoding 4K remuxes and HDR/Dolby Vision content risks losing quality and DV metadata. The proposal is to exclude 4K until the A380's AV1 quality is tested on samples. Decide after a test in the transcode phase.
-- **Family client AV1 support:** check whether each family device (TV brand/model, Roku, Fire TV, Apple TV) decodes AV1. If most don't, FileFlows still saves space but increases transcoding. Resolve with a device inventory during onboarding.
-- **Upload bandwidth:** measure it to set Plex and Jellyfin remote bitrate caps. Resolve in the media phase.
+- ~~CGNAT~~: resolved, not behind CGNAT.
+- ~~Upload bandwidth~~: resolved, 1 Gbps symmetrical.
+- ~~Family client AV1 support~~: resolved, family is upgrading to AV1-capable devices (Google TV Streamer or equivalent). The family guide lists recommended devices.
 - **Twingate connector location:** a container on the media VM (simple) or a separate LXC (keeps admin access working when the VM is down). The recommendation is a separate small LXC. Decide in the host phase.
 - **Seerr authentication:** Plex login only, or Authentik forward-auth in front? This depends on whether Seerr's OIDC support is mature in the pinned version. Decide in the edge phase.
 - **Usenet providers and indexers:** the owner supplies these; they are not part of the design.
@@ -190,9 +189,9 @@ Image tags are pinned (no `latest`). Secrets go in `secrets/` using Docker secre
 **Proposed phases:**
 1. Host and VM foundation: ZFS datasets, IOMMU, VM, A380 passthrough, virtiofs, Docker, repo skeleton, `.env.example`, mkdirs.
 2. Core automation and media: SAB, Prowlarr, the 4 Sonarr/Radarr instances + Lidarr, Plex, Jellyfin, Seerr; hardlink and HW-transcode verification.
-3. Edge and secure access: DDNS, Traefik, Authentik, CrowdSec/geo-block, Twingate, router forwards, CGNAT check.
+3. Edge and secure access: DDNS, Traefik, Authentik, CrowdSec/geo-block, Twingate, router forwards (443, 32400).
 4. Quality automation and AV1: Recyclarr (AV1-neutral), Bazarr, Maintainerr, FileFlows flow and sample validation.
 5. Ops: Homepage, Uptime Kuma, Tautulli, notifications, Diun, PBS + restic backups, restore drill.
-6. Family onboarding: invites, library sharing rules, family guide, device AV1 inventory.
+6. Family onboarding: invites, library sharing rules, family guide with AV1-capable device recommendations.
 
 **Success criteria:** a family member can request, receive and stream a title remotely with no admin action (HD); no admin UI is reachable without Twingate; certificates renew and DDNS updates automatically; a VM restore from backup is proven; FileFlows reduces the size of the HD library without triggering *arr re-downloads.
