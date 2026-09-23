@@ -70,6 +70,36 @@ consolidated without you naming it.
 
 ### Before moving the drives (old server)
 
+0. **Back up the app configs that are NOT on the pool.** On the owner's old
+   server, the Docker app configs (Sonarr, Radarr, Plex, SAB, …) live in
+   `/docker` on the old Ubuntu VM's own disk (`/dev/sda2`, ext4), **not** on
+   `tank`. They don't move with the SSDs, so archive them onto the pool
+   first. Run this on the old Ubuntu VM:
+   ```bash
+   # 1) Record what was running (image tags matter: Phase 2 restores onto the
+   #    same or newer versions, never older, or the app databases can't be read)
+   docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | sudo tee /docker/_containers.txt
+   docker inspect $(docker ps -aq) | sudo tee /docker/_inspect.json >/dev/null
+   du -sh /docker                     # size check (Plex metadata can be large)
+
+   # 2) Stop the containers so the SQLite databases are consistent
+   docker stop $(docker ps -q)
+
+   # 3) Stream an archive straight onto the pool on the old Proxmox host
+   #    (no local disk space needed). Plex's Cache is disposable, so it's excluded.
+   ssh root@<old-proxmox-host> 'mkdir -p /tank/migration'
+   sudo tar --exclude='*/Plex Media Server/Cache' -cpf - -C / docker \
+     | zstd -T0 \
+     | ssh root@<old-proxmox-host> "cat > /tank/migration/old-docker-$(date +%F).tar.zst"
+
+   # 4) Verify the archive before going any further
+   ssh root@<old-proxmox-host> "zstd -t /tank/migration/old-docker-*.tar.zst && tar -I zstd -tf /tank/migration/old-docker-*.tar.zst | head"
+   ```
+   Expected output: `zstd -t` reports the file OK, and the listing starts with
+   `docker/…`. If the containers must keep serving until the move, restart
+   them now (`docker start $(docker ps -aq)`) and repeat steps 2–4 right
+   before step 4 below, so the archive is current. Phase 2 restores these
+   configs from `/tank/migration/` and remaps their paths to `/data/...`.
 1. Stop anything using the pool (Plex, *arr apps, SMB/NFS shares, etc.).
 2. Confirm the pool is healthy:
    ```bash
@@ -221,7 +251,8 @@ once. There's plenty of room, and the copy picks up `tank/data`'s 1M recordsize.
    | `shows` | copy to `data/media/tv`; 4K is split out in Phase 2 via Sonarr-4K |
    | `anime` (series only) | copy to `data/media/anime-tv` |
    | `music` | copy to `data/media/music` |
-   | `docker` | old *arr/Plex/SAB configs. **Keep in place.** Migrated in Phase 2 (settings, history, Plex watch state; paths get remapped) |
+   | `docker` | **not** the live configs (those were on the old VM's disk and are archived to `migration/` in step 0). Keep in place; review later |
+   | `migration` | `old-docker-<date>.tar.zst` from step 0. **Keep.** Phase 2 restores the configs from it |
    | `template` | old ISOs/templates. Register as ISO storage (below) |
    | `dump`, `images`, `private`, `snippets`, `import` | old Proxmox storage content. Keep; review and clean up later |
    | `downloads` | old download state. Check for unfinished items, then delete (not migrated) |
