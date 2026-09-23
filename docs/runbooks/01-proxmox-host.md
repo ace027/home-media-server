@@ -213,6 +213,37 @@ once. There's plenty of room, and the copy picks up `tank/data`'s 1M recordsize.
    ```
    Then delete the original folders (never `/tank/data` or `/tank/backups`).
    The space isn't freed until the snapshot is removed.
+   **The owner's mapping** (`ls /tank` inventory, 2026-09-23):
+
+   | `/tank/…` | Action |
+   |---|---|
+   | `movies` | copy to `data/media/movies`; 4K is mixed in and gets split out in Phase 2 via Radarr-4K |
+   | `shows` | copy to `data/media/tv`; 4K is split out in Phase 2 via Sonarr-4K |
+   | `anime` (series only) | copy to `data/media/anime-tv` |
+   | `music` | copy to `data/media/music` |
+   | `docker` | old *arr/Plex/SAB configs. **Keep in place.** Migrated in Phase 2 (settings, history, Plex watch state; paths get remapped) |
+   | `template` | old ISOs/templates. Register as ISO storage (below) |
+   | `dump`, `images`, `private`, `snippets`, `import` | old Proxmox storage content. Keep; review and clean up later |
+   | `downloads` | old download state. Check for unfinished items, then delete (not migrated) |
+   | `fileflows` | old FileFlows state. Not migrated (Phase 4 starts fresh) |
+   | `books` | out of scope. Leave in place |
+
+   ```bash
+   mkdir -p /tank/data/media/{movies,movies-4k,tv,tv-4k,anime-tv,anime-movies,music}
+   rsync -aHAX --info=progress2 /tank/movies/ /tank/data/media/movies/
+   rsync -aHAX --info=progress2 /tank/shows/  /tank/data/media/tv/
+   rsync -aHAX --info=progress2 /tank/anime/  /tank/data/media/anime-tv/
+   rsync -aHAX --info=progress2 /tank/music/  /tank/data/media/music/
+   ```
+
+   Register the old ISOs/templates as storage. Proxmox reads ISOs from
+   `<path>/template/iso`, so this picks up `/tank/template`. You can also
+   upload the Debian 13 netinst here and use `ISO=tank-iso:iso/<file>`
+   with `20-create-vm.sh`:
+   ```bash
+   pvesm add dir tank-iso --path /tank --content iso,vztmpl
+   pvesm list tank-iso --content iso
+   ```
 5. After Phase 2 confirms the library in Sonarr/Radarr/Lidarr and Plex:
    `zfs destroy tank@pre-migration`. This is irreversible and frees the old copy's space.
 

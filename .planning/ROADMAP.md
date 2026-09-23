@@ -32,6 +32,8 @@
 - [ ] Prowlarr syncs its indexers to all 5 *arr instances (checked via API)
 - [ ] A test request in Seerr (HD, 4K, anime) lands in the correct instance, root folder and SAB category, and is imported as a hardlink (same inode)
 - [ ] Plex and Jellyfin dashboards show hardware transcoding (hw) on a forced transcode
+- [ ] Old app configs in `/tank/docker` (Sonarr/Radarr/Plex/SAB) are migrated with paths remapped to `/data/...`, keeping settings, history and Plex watch state
+- [ ] 4K titles mixed into `media/movies` and `media/tv` are identified and moved to `movies-4k`/`tv-4k` under Radarr-4K/Sonarr-4K
 - [ ] The existing library migrated from the old SSD pool is adopted by Sonarr/Radarr/Lidarr (root folders under `/data/media`) with no re-downloads, and appears in Plex and Jellyfin
 **Plans**: 3
 
