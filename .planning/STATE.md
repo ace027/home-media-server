@@ -25,7 +25,7 @@
 ## GitHub
 - Phase 1 issue: #1 (https://github.com/ace027/home-media-server/issues/1)
 - Branches: `main` (default, released), `dev` (integration; all work branches from and merges into `dev`)
-- Phase 1 PR: `dev` → `main` (supersedes #2, which was opened from a now-retired `claude/` branch); includes review fixes 5d72178, 0a01d43
+- Phase 1 PR: #3 `dev` → `main` (https://github.com/ace027/home-media-server/pull/3; supersedes #2, which was opened from a now-retired `claude/` branch); includes review fixes 5d72178, 0a01d43
 
 ## Next Action
 Run `/legion:plan 2` to plan the next phase (Core Media Automation)
