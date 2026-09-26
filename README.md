@@ -20,3 +20,6 @@ secrets/         # gitignored; Docker secrets or *_FILE sources (never committed
 
 ## Documentation
 See [`docs/README.md`](docs/README.md) for the full documentation index.
+
+## Branches
+`main` is the default branch and holds released work. Development happens on `dev`: feature branches are cut from `dev` and merged back into it by PR, and `dev` is merged into `main` when a phase is complete. See [`CLAUDE.md`](CLAUDE.md).
