@@ -92,6 +92,54 @@ jobs:
           grep -q 'softdep i915 pre: vfio-pci' <<<"$out"
           grep -q 'DRY-RUN: update-initramfs -u -k all' <<<"$out"
 
+      - name: IOMMU/vfio FORCE_REFRESH re-runs both refreshes
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          scripts/ci/make-host-stubs.sh "$d/bin"
+          mkdir -p "$d/root/proc" "$d/root/etc/default"
+          printf 'vendor_id\t: GenuineIntel\n' > "$d/root/proc/cpuinfo"
+          # cmdline already configured, vfio files missing: the state left
+          # behind when a failed update-grub stopped an earlier --apply.
+          echo 'GRUB_CMDLINE_LINUX_DEFAULT="quiet intel_iommu=on iommu=pt"' > "$d/root/etc/default/grub"
+          out=$(FORCE_REFRESH=1 SYSROOT="$d/root" PATH="$d/bin:$PATH" scripts/host/10-iommu-vfio.sh 2>&1)
+          printf '%s\n' "$out"
+          grep -q 'DRY-RUN: update-grub' <<<"$out"
+          grep -q 'DRY-RUN: update-initramfs -u -k all' <<<"$out"
+          # update-initramfs must come before the bootloader refresh.
+          test "$(grep -n 'DRY-RUN: update-initramfs' <<<"$out" | cut -d: -f1)" \
+            -lt "$(grep -n 'DRY-RUN: update-grub' <<<"$out" | cut -d: -f1)"
+
+      - name: VM creation guards (existing mapping, RESUME)
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          scripts/ci/make-host-stubs.sh "$d/bin"
+          # Existing mapping pointing at the right path: reused, not re-created.
+          out=$(STUB_DIR_MAPPING='node=pve,path=/tank/data' PATH="$d/bin:$PATH" scripts/host/20-create-vm.sh 2>&1)
+          printf '%s\n' "$out"
+          grep -q 'mapping media-data exists -> /tank/data' <<<"$out"
+          if grep -q 'DRY-RUN: pvesh create' <<<"$out"; then echo 'unexpected: DRY-RUN: pvesh create'; exit 1; fi
+          # Existing mapping pointing elsewhere: refused.
+          rc=0
+          out=$(STUB_DIR_MAPPING='node=pve,path=/srv/other' PATH="$d/bin:$PATH" scripts/host/20-create-vm.sh 2>&1) || rc=$?
+          printf '%s\n' "$out"
+          test "$rc" -eq 1
+          grep -q 'has no entry node=pve,path=/tank/data' <<<"$out"
+          # RESUME=1 into a VM with another name: refused.
+          rc=0
+          out=$(RESUME=1 STUB_QM_CONFIG='name: other-vm' PATH="$d/bin:$PATH" scripts/host/20-create-vm.sh 2>&1) || rc=$?
+          printf '%s\n' "$out"
+          test "$rc" -eq 1
+          grep -q 'is not named media-01' <<<"$out"
+          # RESUME=1 into the right VM: only the missing setting is added.
+          out=$(RESUME=1 STUB_QM_CONFIG=$'name: media-01\nhostpci0: 0000:05:00.0,pcie=1' PATH="$d/bin:$PATH" scripts/host/20-create-vm.sh 2>&1)
+          printf '%s\n' "$out"
+          grep -q 'hostpci0 does not point at the A380' <<<"$out"
+          if grep -q 'DRY-RUN: qm create' <<<"$out"; then echo 'unexpected: DRY-RUN: qm create'; exit 1; fi
+          if grep -q 'DRY-RUN: qm set 200 --hostpci0' <<<"$out"; then echo 'unexpected: DRY-RUN: qm set 200 --hostpci0'; exit 1; fi
+          grep -q 'DRY-RUN: qm set 200 --virtiofs0 media-data,cache=auto' <<<"$out"
+
       - name: VM bootstrap dry-run against a fake SYSROOT
         run: |
           set -euo pipefail

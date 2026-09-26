@@ -33,6 +33,8 @@ DATA_ROOT="${DATA_ROOT:-/data}"
 APPDATA_ROOT="${APPDATA_ROOT:-/opt/appdata}"
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
+require_match PUID "$PUID" '^[0-9]+$' "a numeric uid"
+require_match PGID "$PGID" '^[0-9]+$' "a numeric gid"
 
 umask 002
 

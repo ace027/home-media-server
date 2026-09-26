@@ -148,7 +148,7 @@ and lets the virtiofs mount and Docker come up cleanly. Membership in
 `docker` is root-equivalent (any member can start a privileged container),
 so keep SSH for `media` key-only (`PasswordAuthentication no`). If your VM's
 codename ever falls outside what Docker's apt repo supports yet, rerun with
-`DOCKER_CODENAME=bookworm sudo scripts/vm/00-bootstrap.sh --apply`.
+`sudo DOCKER_CODENAME=bookworm scripts/vm/00-bootstrap.sh --apply`.
 
 ## 3. Data tree
 

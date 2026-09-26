@@ -161,7 +161,8 @@ require_cmd() {
 # If $REPO_ROOT/.env exists, reads KEY=VALUE lines (skipping blank lines and
 # lines starting with #) and exports each KEY that is not already set in the
 # environment. Never sources the file directly, so it cannot execute
-# arbitrary shell content. A missing .env is not an error.
+# arbitrary shell content. A missing .env is not an error; an unreadable one
+# (e.g. root-owned 0600, read by a non-root --help or dry run) is a warning.
 #
 # Call it BEFORE assigning defaults (VAR="${VAR:-default}"): a default
 # assignment marks VAR as set, and load_env would then skip the .env value.
@@ -169,6 +170,10 @@ require_cmd() {
 load_env() {
   local env_file="$REPO_ROOT/.env"
   [[ -f "$env_file" ]] || return 0
+  if [[ ! -r "$env_file" ]]; then
+    log_warn "$env_file is not readable; ignoring it (run as root to use it)"
+    return 0
+  fi
 
   local line key value
   while IFS= read -r line || [[ -n "$line" ]]; do

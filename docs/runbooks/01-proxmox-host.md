@@ -81,17 +81,18 @@ consolidated without you naming it.
    # 1) Record what was running (image tags matter: Phase 2 restores onto the
    #    same or newer versions, never older, or the app databases can't be read)
    docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | sudo tee /docker/_containers.txt
-   docker inspect $(docker ps -aq) | sudo tee /docker/_inspect.json >/dev/null
+   # _inspect.json and _compose-resolved.yml hold live secrets copied from the
+   # containers' env (Twingate tokens, VPN keys, *arr API keys), so they are
+   # written root-only (umask 077) and are never world-readable, even briefly.
+   docker inspect $(docker ps -aq) | sudo sh -c 'umask 077; cat > /docker/_inspect.json'
    docker inspect --format '{{.Name}} {{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.version"}}' $(docker ps -aq) | sudo tee /docker/_versions.txt
    # Old layout: two compose projects, /docker/plex (plex, seerr, tautulli)
    # and /docker/servarr (everything else). Save the resolved compose files;
    # their volume mappings are what Phase 2 uses to remap old paths.
    ls /docker/plex /docker/servarr | sudo tee /docker/_layout.txt
    for p in /docker/plex /docker/servarr; do (cd "$p" && docker compose config); done \
-     | sudo tee /docker/_compose-resolved.yml >/dev/null
-   # These two files hold live secrets copied from the containers' env
-   # (Twingate tokens, VPN keys, *arr API keys): make them root-only.
-   sudo chmod 600 /docker/_inspect.json /docker/_compose-resolved.yml
+     | sudo sh -c 'umask 077; cat > /docker/_compose-resolved.yml'
+   sudo ls -l /docker/_inspect.json /docker/_compose-resolved.yml   # expect -rw------- root
    du -sh /docker                     # size check (Plex metadata can be large)
 
    # 2) Stop the containers so the SQLite databases are consistent
@@ -99,7 +100,8 @@ consolidated without you naming it.
 
    # 3) Stream an archive straight onto the pool on the old Proxmox host
    #    (no local disk space needed). Plex's Cache is disposable, so it's excluded.
-   ssh root@<old-proxmox-host> 'mkdir -p -m 700 /tank/migration'
+   #    (chmod, not mkdir -m: -m has no effect on an existing directory)
+   ssh root@<old-proxmox-host> 'mkdir -p /tank/migration && chmod 700 /tank/migration'
    sudo tar --exclude='*/Plex Media Server/Cache' -cpf - -C / docker \
      | zstd -T0 \
      | ssh root@<old-proxmox-host> "umask 077 && cat > /tank/migration/old-docker-$(date +%F).tar.zst"
@@ -117,7 +119,13 @@ consolidated without you naming it.
    permission. Read what you need from them in place on the pool. Once the
    old VM is retired, **revoke** the old Twingate connector's tokens (Twingate
    admin console) and the old VPN credentials (the VPN provider's account
-   page), since copies of them now sit in these files.
+   page), since copies of them now sit in these files. Also delete the plain
+   dumps from the old VM before it is retired (the archive on the pool keeps
+   a copy inside it):
+   ```bash
+   # on the old Ubuntu VM, once Phase 2 has restored the configs
+   sudo rm -f /docker/_inspect.json /docker/_compose-resolved.yml
+   ```
    Expected output: `zstd -t` reports the file OK, and the listing starts with
    `docker/…`. If the containers must keep serving until the move, restart
    them now (`docker start $(docker ps -aq)`) and repeat steps 2–4 right
@@ -412,15 +420,18 @@ Expected output:
 [INFO] detected audio: 0000:04:00.0
 [INFO] CPU vendor: GenuineIntel -> params: intel_iommu=on iommu=pt
 DRY-RUN: sed -i 's/$/ intel_iommu=on iommu=pt/' "/etc/kernel/cmdline"
-DRY-RUN: proxmox-boot-tool refresh
 DRY-RUN: mkdir -p "/etc/modules-load.d" && printf 'vfio\nvfio_iommu_type1\nvfio_pci\n' > "/etc/modules-load.d/vfio.conf"
 DRY-RUN: mkdir -p "/etc/modprobe.d" && printf 'options vfio-pci ids=8086:56a5,8086:4f92\nsoftdep i915 pre: vfio-pci\nsoftdep xe pre: vfio-pci\nsoftdep snd_hda_intel pre: vfio-pci\n' > "/etc/modprobe.d/vfio.conf"
 DRY-RUN: update-initramfs -u -k all
+DRY-RUN: proxmox-boot-tool refresh
 [WARN] reboot required for the new IOMMU/vfio configuration to take effect
 [INFO] after reboot, verify with: dmesg | grep -e DMAR -e IOMMU
 [INFO] after reboot, verify with: lspci -nnk -s 0000:03:00.0 (expect: Kernel driver in use: vfio-pci)
 ```
 (Captured on an Intel CPU, systemd-boot host, with nothing configured yet.
+Both refreshes run last, after every file is written: `update-initramfs`
+first, so that `proxmox-boot-tool refresh` (or `update-grub` on a GRUB host)
+picks up the rebuilt initramfs.
 PCI addresses like `0000:03:00.0` are specific to this host's slot layout;
 yours may differ. If detection fails or finds more than one match, set
 `GPU_PCI=<address>` explicitly.)
@@ -432,7 +443,23 @@ scripts/host/10-iommu-vfio.sh --apply
 reboot
 ```
 
-After the reboot, confirm IOMMU is active:
+After the reboot, confirm the running kernel actually got the new
+parameters (this catches an edit to a bootloader file this host doesn't
+boot from):
+
+```bash
+cat /proc/cmdline
+```
+
+Expected output (contains `intel_iommu=on iommu=pt`; just `iommu=pt` on AMD):
+```
+initrd=\EFI\proxmox\6.14.8-2-pve\initrd.img-6.14.8-2-pve root=ZFS=rpool/ROOT/pve-1 boot=zfs intel_iommu=on iommu=pt
+```
+(Representative; on a GRUB host it starts with `BOOT_IMAGE=/boot/vmlinuz-...`.)
+If the parameters are missing, the edit went to the wrong file: check which
+bootloader is in use with `proxmox-boot-tool status`.
+
+Confirm IOMMU is active:
 
 ```bash
 dmesg | grep -e DMAR -e IOMMU
@@ -488,6 +515,11 @@ DRY-RUN: qm set 200 --virtiofs0 media-data,cache=auto
 ```
 (Captured on a fresh host with nothing created yet. `<your-node>` is this
 host's hostname — the script fills it in automatically with `hostname`.)
+If the `media-data` mapping already exists, the script prints
+`mapping media-data exists -> <path>` instead of creating it, and refuses
+unless the mapping has an entry for this node pointing at `tank/data`'s
+mountpoint (`/tank/data`); fix the mapping in the GUI or set
+`DIR_MAPPING_ID` to a new id.
 
 If the ISO path shown by `pvesm list local --content iso` (Prerequisites)
 differs from the default, pass it explicitly:
@@ -569,28 +601,29 @@ among the group members.)
 - Reboot again — `softdep` ordering only takes effect from the *next* boot
   using the rebuilt initramfs.
 
-**`10-iommu-vfio.sh --apply` failed during `proxmox-boot-tool refresh`,
-`update-grub` or `update-initramfs`.** The script stops with
-`'<command>' failed; ... re-run: FORCE_REFRESH=1 ...`. The config files are
-already written by then, so a plain re-run would print `no changes needed`
-and skip the refresh. Fix the cause the command printed (a full `/boot` or
-ESP is common), then force the refresh:
+**`10-iommu-vfio.sh --apply` failed during `update-initramfs`,
+`proxmox-boot-tool refresh` or `update-grub`.** The script stops with
+`'<command>' failed; ... re-run: FORCE_REFRESH=1 ...`. Both refreshes run
+last, after every config file is written, so a plain re-run would see the
+files as already correct and skip the refresh that failed. Fix the cause the
+command printed (a full `/boot` or ESP is common), then re-run with
+`FORCE_REFRESH=1`, which re-runs both refreshes regardless of file state:
 ```bash
 FORCE_REFRESH=1 scripts/host/10-iommu-vfio.sh           # dry-run: shows what it will re-run
 FORCE_REFRESH=1 scripts/host/10-iommu-vfio.sh --apply
 reboot
 ```
 `FORCE_REFRESH` is environment only (ignored in `.env`). The same thing by
-hand, on a systemd-boot host (`/etc/kernel/cmdline` exists; the Proxmox
-default on ZFS root):
+hand, in the same order, on a systemd-boot host (`/etc/kernel/cmdline`
+exists; the Proxmox default on ZFS root):
 ```bash
-proxmox-boot-tool refresh
 update-initramfs -u -k all
+proxmox-boot-tool refresh
 ```
 or on a GRUB host (`/etc/default/grub`):
 ```bash
-update-grub
 update-initramfs -u -k all
+update-grub
 ```
 
 **`10-iommu-vfio.sh` says `has no double-quoted GRUB_CMDLINE_LINUX_DEFAULT`
@@ -608,7 +641,9 @@ command's error; e.g. a wrong `GPU_PCI` or a missing directory mapping),
 then pick one:
 - **Resume** (keeps the VM): `RESUME=1` skips `qm create` for an existing
   VMID and only runs the `qm set` lines whose setting is missing from
-  `qm config`:
+  `qm config`. It refuses unless that VM is named `VM_NAME` (`media-01`),
+  so it never modifies some other VM that happens to use the VMID, and
+  warns if an existing `hostpci0` doesn't point at the A380:
   ```bash
   RESUME=1 scripts/host/20-create-vm.sh           # dry-run: shows what's left
   RESUME=1 scripts/host/20-create-vm.sh --apply

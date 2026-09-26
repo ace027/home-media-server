@@ -47,6 +47,10 @@ EOF
 }
 
 parse_common_args "$@"
+require_match FORCE_IMPORT "$FORCE_IMPORT" '^[01]$' "0 or 1"
+require_match FIX_OWNERSHIP "$FIX_OWNERSHIP" '^[01]$' "0 or 1"
+require_match PUID "$PUID" '^[0-9]+$' "a numeric uid"
+require_match PGID "$PGID" '^[0-9]+$' "a numeric gid"
 require_root
 require_cmd zpool zfs
 
@@ -60,7 +64,7 @@ else
   fi
 
   import_args=(zpool import)
-  if [[ $FORCE_IMPORT -eq 1 ]]; then
+  if [[ "$FORCE_IMPORT" == "1" ]]; then
     log_warn "-f import is only safe once the old server no longer uses the pool"
     import_args+=(-f)
   fi
@@ -133,7 +137,7 @@ if zfs list -H -o name "$POOL/data" >/dev/null 2>&1; then
     first="$(find "$mnt" -xdev \( ! -uid "$PUID" -o ! -gid "$PGID" \) -print -quit 2>/dev/null || true)"
     if [[ -n "$first" ]]; then
       log_warn "found files under $mnt not owned by $PUID:$PGID (e.g. $first)"
-      if [[ $FIX_OWNERSHIP -eq 1 ]]; then
+      if [[ "$FIX_OWNERSHIP" == "1" ]]; then
         run chown -R "$PUID:$PGID" "$mnt"
         run chmod -R u=rwX,g=rwX,o=rX "$mnt"
       else

@@ -197,15 +197,16 @@ check_hardlink() {
 
   local ln_err
   if ! ln_err="$(ln "$src" "$dst" 2>&1)"; then
-    # Keep the FAIL line to a single line, and only call it cross-device
-    # when the two parent directories really are on different devices.
+    # Keep the FAIL line to a single line, and call it cross-device when
+    # ln says so (EXDEV) or the two parent directories are on different
+    # devices. stat -L follows a symlinked parent to the real directory.
     ln_err="${ln_err//$'\n'/ }"
     local src_dir dst_dir dev_src dev_dst reason
     src_dir="$(dirname "$src")"
     dst_dir="$(dirname "$dst")"
-    dev_src="$(stat -c %d "$src_dir" 2>/dev/null || echo "?")"
-    dev_dst="$(stat -c %d "$dst_dir" 2>/dev/null || echo "?")"
-    if [[ "$dev_src" != "$dev_dst" ]]; then
+    dev_src="$(stat -L -c %d "$src_dir" 2>/dev/null || echo "?")"
+    dev_dst="$(stat -L -c %d "$dst_dir" 2>/dev/null || echo "?")"
+    if [[ "${ln_err,,}" == *cross-device* || "$dev_src" != "$dev_dst" ]]; then
       reason="cross-device: $src_dir on dev $dev_src, $dst_dir on dev $dev_dst"
     else
       reason="same device $dev_src"
