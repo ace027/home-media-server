@@ -29,4 +29,6 @@ There are two compose projects on the old VM:
 
 The archive also holds `_containers.txt`, `_inspect.json`, `_versions.txt`, `_layout.txt` and `_compose-resolved.yml`. The resolved compose file's `volumes:` mappings define the **old in-container paths** that the *arr databases and Plex libraries reference. Phase 2 remaps each of them to `/data/media/*` (or keeps compatible mount paths where remapping is riskier). Restore target: `/docker/<project>/<app>` → `/opt/appdata/<app>`, with `animesonarr` → `sonarr-anime`.
 
+**Secrets:** `_inspect.json`, `_compose-resolved.yml` and the `.tar.zst` archive contain live credentials from the old containers' env (Twingate tokens, VPN keys, *arr/SAB API keys). Read them in place on the pool (root-only, mode 600). Never copy them, or excerpts with credentials, into this repo; only non-secret facts such as volume mappings and image versions may be transcribed. Revoke the old Twingate connector tokens and VPN credentials once the old VM is retired (runbook 01 §1a step 0).
+
 New instances with no old config: `sonarr-4k`, `radarr-4k`, plus Traefik, Authentik, CrowdSec, cloudflare-ddns, Recyclarr, Maintainerr, and the Phase 5 ops apps.

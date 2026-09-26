@@ -3,6 +3,12 @@ set -Eeuo pipefail
 # shellcheck source=scripts/lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 
+# RESUME is deliberately environment-only (assigned before load_env): it is a
+# one-off recovery switch, not configuration.
+RESUME="${RESUME:-0}"
+
+# .env first, then defaults, so .env values are not masked by the defaults.
+load_env
 VMID="${VMID:-200}"
 VM_NAME="${VM_NAME:-media-01}"
 VM_CORES="${VM_CORES:-8}"
@@ -39,11 +45,18 @@ Environment variables (defaults):
   POOL=$POOL
   GPU_PCI=<auto-detected>   PCI address of the GPU (e.g. 0000:03:00.0).
   GPU_ID=$GPU_ID           PCI vendor:device ID used for auto-detection.
+  RESUME=$RESUME                  Set to 1 to finish a VM whose creation stopped
+                            half-way: if VMID already exists, skip qm create
+                            and only add the hostpci0/virtiofs0 settings
+                            missing from qm config (environment only).
 EOF
 }
 
 parse_common_args "$@"
-load_env
+require_match VMID "$VMID" '^[0-9]+$' "a numeric VM id"
+require_match GPU_ID "$GPU_ID" '^[0-9a-f]{4}:[0-9a-f]{4}$' "vendor:device in lowercase hex, e.g. 8086:56a5"
+require_match DIR_MAPPING_ID "$DIR_MAPPING_ID" '^[A-Za-z0-9_-]+$' "letters, digits, _ and - only"
+require_match RESUME "$RESUME" '^[01]$' "0 or 1"
 require_root
 require_cmd qm pvesh pveversion pvesm lspci zfs
 
@@ -83,9 +96,14 @@ if ! pvesm list "$iso_store" --content iso 2>/dev/null | grep -qF "$ISO"; then
   die "ISO $ISO not found; upload the Debian 13 netinst ISO and set ISO=local:iso/<actual-filename>.iso (real names include the point release, e.g. debian-13.1.0-amd64-netinst.iso)"
 fi
 
-# --- 3: VMID must not already exist ---------------------------------------
+# --- 3: VMID must not already exist (unless RESUME=1) ---------------------
+vm_exists=0
 if qm status "$VMID" >/dev/null 2>&1; then
-  die "VMID $VMID already exists"
+  if [[ "$RESUME" != "1" ]]; then
+    die "VMID $VMID already exists; if an earlier --apply stopped after qm create, re-run with RESUME=1 (see runbook 01, section 5)"
+  fi
+  vm_exists=1
+  log_info "RESUME=1: VMID $VMID exists; only adding missing settings"
 fi
 
 # --- 4: directory mapping --------------------------------------------------
@@ -99,18 +117,31 @@ if ! pvesh get "/cluster/mapping/dir/$DIR_MAPPING_ID" >/dev/null 2>&1; then
 fi
 
 # --- 5: create the VM -------------------------------------------------------
-run qm create "$VMID" --name "$VM_NAME" --machine q35 --bios ovmf --cpu host \
-  --cores "$VM_CORES" --memory "$VM_MEMORY" --balloon 0 \
-  --scsihw virtio-scsi-single --scsi0 "$VM_STORAGE:$VM_DISK_GB,iothread=1,discard=on,ssd=1" \
-  --efidisk0 "$VM_STORAGE:1,efitype=4m,pre-enrolled-keys=0" \
-  --net0 "virtio,bridge=$VM_BRIDGE" --ide2 "$ISO,media=cdrom" \
-  --boot "order=scsi0;ide2" --ostype l26 --agent enabled=1 --onboot 1
+vm_config=""
+if [[ $vm_exists -eq 1 ]]; then
+  vm_config="$(qm config "$VMID")"
+else
+  run qm create "$VMID" --name "$VM_NAME" --machine q35 --bios ovmf --cpu host \
+    --cores "$VM_CORES" --memory "$VM_MEMORY" --balloon 0 \
+    --scsihw virtio-scsi-single --scsi0 "$VM_STORAGE:$VM_DISK_GB,iothread=1,discard=on,ssd=1" \
+    --efidisk0 "$VM_STORAGE:1,efitype=4m,pre-enrolled-keys=0" \
+    --net0 "virtio,bridge=$VM_BRIDGE" --ide2 "$ISO,media=cdrom" \
+    --boot "order=scsi0;ide2" --ostype l26 --agent enabled=1 --onboot 1
+fi
 
 # --- 6: GPU passthrough ------------------------------------------------------
-run qm set "$VMID" --hostpci0 "$GPU_PCI,pcie=1"
+if grep -q '^hostpci0:' <<<"$vm_config"; then
+  log_info "hostpci0 already set: $(grep -m1 '^hostpci0:' <<<"$vm_config")"
+else
+  run qm set "$VMID" --hostpci0 "$GPU_PCI,pcie=1"
+fi
 
 # --- 7: virtiofs share -------------------------------------------------------
-run qm set "$VMID" --virtiofs0 "$DIR_MAPPING_ID,cache=auto"
+if grep -q '^virtiofs0:' <<<"$vm_config"; then
+  log_info "virtiofs0 already set: $(grep -m1 '^virtiofs0:' <<<"$vm_config")"
+else
+  run qm set "$VMID" --virtiofs0 "$DIR_MAPPING_ID,cache=auto"
+fi
 
 # --- 8: next steps ------------------------------------------------------------
 log_info "next: start VM $VMID, install Debian 13, then follow docs/runbooks/02-vm-bootstrap.md"

@@ -31,6 +31,46 @@ die() {
   exit 1
 }
 
+# on_err <rc> <lineno> <command>
+#
+# ERR trap handler: names the failing command and its location, so an
+# unexpected non-zero exit under `set -e` is never silent. Commands tested
+# by `if`, `while`, `||`, `&&` or `!` do not trigger ERR, so intentional
+# checks stay quiet. Failures inside a subshell or command substitution are
+# reported once, by the parent shell, rather than twice.
+on_err() {
+  local rc="$1" line="$2" cmd="$3"
+  [[ ${BASH_SUBSHELL:-0} -eq 0 ]] || return 0
+  log_error "failed (rc=$rc) at ${BASH_SOURCE[1]:-$0}:$line: $cmd"
+}
+trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
+
+# require_match <name> <value> <regex> <hint>
+#
+# Dies unless <value> matches the extended regex <regex>. Used to validate
+# environment values up front, before any of them are interpolated into a
+# `run_sh` command string.
+require_match() {
+  local name="$1" value="$2" regex="$3" hint="$4"
+  if [[ ! "$value" =~ $regex ]]; then
+    die "invalid $name='$value' (expected $hint)"
+  fi
+}
+
+# require_safe_path <name> <value> [allow_empty]
+#
+# Dies unless <value> is an absolute path made only of safe characters
+# (letters, digits, and / . _ -). Pass allow_empty=1 to accept an empty
+# value (e.g. SYSROOT, which is empty on a real system).
+require_safe_path() {
+  local name="$1" value="$2" allow_empty="${3:-0}"
+  if [[ -z "$value" && "$allow_empty" == "1" ]]; then
+    return 0
+  fi
+  require_match "$name" "$value" '^/[A-Za-z0-9_./-]*$' \
+    "an absolute path using only letters, digits and / . _ -"
+}
+
 # parse_common_args "$@"
 #
 # Recognizes:
@@ -121,7 +161,11 @@ require_cmd() {
 # If $REPO_ROOT/.env exists, reads KEY=VALUE lines (skipping blank lines and
 # lines starting with #) and exports each KEY that is not already set in the
 # environment. Never sources the file directly, so it cannot execute
-# arbitrary shell content.
+# arbitrary shell content. A missing .env is not an error.
+#
+# Call it BEFORE assigning defaults (VAR="${VAR:-default}"): a default
+# assignment marks VAR as set, and load_env would then skip the .env value.
+# To keep a variable environment-only, assign it before calling load_env.
 load_env() {
   local env_file="$REPO_ROOT/.env"
   [[ -f "$env_file" ]] || return 0

@@ -60,8 +60,10 @@ Save, reboot into Proxmox, and continue below.
 
 ## 1a. Migrating an existing pool
 
-Skip this section if `tank` is a fresh pool created from scratch (`## 2. ZFS
-datasets` below creates it). Follow it instead if `/data` will be an
+Skip this section if `tank` is a new, empty pool you created yourself on
+this host (with `zpool create`, as the Prerequisites assume). `## 2. ZFS
+datasets` below only creates the datasets on an existing pool; it never
+creates the pool itself. Follow this section instead if `/data` will be an
 **existing** ZFS pool, on SSDs, moved from another (still-running) server
 into this Proxmox host, with a media library on it that must be kept.
 Nothing in this procedure destroys or overwrites data by default: import
@@ -87,6 +89,9 @@ consolidated without you naming it.
    ls /docker/plex /docker/servarr | sudo tee /docker/_layout.txt
    for p in /docker/plex /docker/servarr; do (cd "$p" && docker compose config); done \
      | sudo tee /docker/_compose-resolved.yml >/dev/null
+   # These two files hold live secrets copied from the containers' env
+   # (Twingate tokens, VPN keys, *arr API keys): make them root-only.
+   sudo chmod 600 /docker/_inspect.json /docker/_compose-resolved.yml
    du -sh /docker                     # size check (Plex metadata can be large)
 
    # 2) Stop the containers so the SQLite databases are consistent
@@ -94,14 +99,25 @@ consolidated without you naming it.
 
    # 3) Stream an archive straight onto the pool on the old Proxmox host
    #    (no local disk space needed). Plex's Cache is disposable, so it's excluded.
-   ssh root@<old-proxmox-host> 'mkdir -p /tank/migration'
+   ssh root@<old-proxmox-host> 'mkdir -p -m 700 /tank/migration'
    sudo tar --exclude='*/Plex Media Server/Cache' -cpf - -C / docker \
      | zstd -T0 \
-     | ssh root@<old-proxmox-host> "cat > /tank/migration/old-docker-$(date +%F).tar.zst"
+     | ssh root@<old-proxmox-host> "umask 077 && cat > /tank/migration/old-docker-$(date +%F).tar.zst"
 
-   # 4) Verify the archive before going any further
+   # 4) Verify the archive before going any further, and keep it root-only
+   #    (it contains the same secrets as _inspect.json)
    ssh root@<old-proxmox-host> "zstd -t /tank/migration/old-docker-*.tar.zst && tar -I zstd -tf /tank/migration/old-docker-*.tar.zst | head"
+   ssh root@<old-proxmox-host> "chmod 600 /tank/migration/old-docker-*.tar.zst && ls -l /tank/migration"
    ```
+   **Secrets warning.** `_inspect.json`, `_compose-resolved.yml` and the
+   `.tar.zst` archive contain live credentials from the old containers'
+   environment: Twingate connector tokens, VPN keys and the *arr/SAB API
+   keys. Never copy them (or excerpts of them) into this git repository or
+   any other; `.gitignore` blocks these names as a safety net, not as
+   permission. Read what you need from them in place on the pool. Once the
+   old VM is retired, **revoke** the old Twingate connector's tokens (Twingate
+   admin console) and the old VPN credentials (the VPN provider's account
+   page), since copies of them now sit in these files.
    Expected output: `zstd -t` reports the file OK, and the listing starts with
    `docker/…`. If the containers must keep serving until the move, restart
    them now (`docker start $(docker ps -aq)`) and repeat steps 2–4 right
@@ -156,7 +172,8 @@ rather keep the pool's original name, pass `POOL=<old-name>` to every
 script from here on (including `00-zfs-datasets.sh` and `20-create-vm.sh`)
 instead of renaming.
 
-`FORCE_IMPORT=1` passes `-f` to `zpool import`, needed only if ZFS reports
+`FORCE_IMPORT=1` (environment only: set it on the command line; the
+script ignores it in `.env`) passes `-f` to `zpool import`, needed only if ZFS reports
 the pool as still "in use by another system" (e.g. the old server wasn't
 cleanly shut down, or you skipped `zpool export`). It is only safe once the
 old server is definitely no longer using the pool — importing a pool that's
@@ -279,9 +296,12 @@ once. There's plenty of room, and the copy picks up `tank/data`'s 1M recordsize.
    upload the Debian 13 netinst here and use `ISO=tank-iso:iso/<file>`
    with `20-create-vm.sh`:
    ```bash
-   pvesm add dir tank-iso --path /tank --content iso,vztmpl
+   pvesm add dir tank-iso --path /tank --content iso,vztmpl --is_mountpoint yes
    pvesm list tank-iso --content iso
    ```
+   `--is_mountpoint yes` makes Proxmox treat the storage as offline when
+   `/tank` isn't mounted, instead of silently writing into the empty
+   directory on the root filesystem.
 5. After Phase 2 confirms the library in Sonarr/Radarr/Lidarr and Plex:
    `zfs destroy tank@pre-migration`. This is irreversible and frees the old copy's space.
 
@@ -315,6 +335,11 @@ Then fix it, if needed:
 ```bash
 FIX_OWNERSHIP=1 scripts/host/05-import-pool.sh --apply
 ```
+`FIX_OWNERSHIP` is environment only: the script ignores it in `.env`, so a
+recursive `chown` never runs unless you ask for it on the command line. If
+the script prints `tank/data not mounted ...; ownership not checked`, mount
+it (`zfs mount tank/data`) and re-run; it doesn't report `ownership OK`
+unless it actually looked.
 
 Continue with `## 2. ZFS datasets` below — `00-zfs-datasets.sh` detects
 that `tank/data` already exists and sets its properties
@@ -499,6 +524,10 @@ virtiofs0: media-data,cache=auto
 ```
 (Representative; `hostpci0` and `virtiofs0` are the lines that matter.)
 
+If `--apply` stops part-way (e.g. `qm create` succeeded but a `qm set` line
+failed), a plain re-run refuses with `VMID 200 already exists`. See
+"`20-create-vm.sh` stopped half-way" in Troubleshooting below.
+
 **GUI alternative** for step 4, if you prefer clicking through the web UI
 instead of running the script:
 1. **Datacenter → Directory Mappings → Add**, ID `media-data`, path
@@ -533,12 +562,63 @@ among the group members.)
 - Confirm `/etc/modprobe.d/vfio.conf` has the `softdep i915 pre: vfio-pci`
   and `softdep xe pre: vfio-pci` lines (both drivers exist on modern
   kernels; DG2 cards can bind to either depending on kernel version).
-- Confirm `update-initramfs -u -k all` actually ran (it only runs when
-  `10-iommu-vfio.sh` detected a change — re-run it; if it reports
-  `no changes needed`, the files are already correct and the initramfs is
-  stale from before this run; force a rebuild manually).
+- Confirm `update-initramfs -u -k all` actually ran. It only runs when
+  `10-iommu-vfio.sh` detected a change, so if it reports `no changes needed`
+  the files are correct but the initramfs may be stale. Force a rebuild
+  (see the next entry).
 - Reboot again — `softdep` ordering only takes effect from the *next* boot
   using the rebuilt initramfs.
+
+**`10-iommu-vfio.sh --apply` failed during `proxmox-boot-tool refresh`,
+`update-grub` or `update-initramfs`.** The script stops with
+`'<command>' failed; ... re-run: FORCE_REFRESH=1 ...`. The config files are
+already written by then, so a plain re-run would print `no changes needed`
+and skip the refresh. Fix the cause the command printed (a full `/boot` or
+ESP is common), then force the refresh:
+```bash
+FORCE_REFRESH=1 scripts/host/10-iommu-vfio.sh           # dry-run: shows what it will re-run
+FORCE_REFRESH=1 scripts/host/10-iommu-vfio.sh --apply
+reboot
+```
+`FORCE_REFRESH` is environment only (ignored in `.env`). The same thing by
+hand, on a systemd-boot host (`/etc/kernel/cmdline` exists; the Proxmox
+default on ZFS root):
+```bash
+proxmox-boot-tool refresh
+update-initramfs -u -k all
+```
+or on a GRUB host (`/etc/default/grub`):
+```bash
+update-grub
+update-initramfs -u -k all
+```
+
+**`10-iommu-vfio.sh` says `has no double-quoted GRUB_CMDLINE_LINUX_DEFAULT`
+or `edit of ... did not take effect`.** The script only edits the
+standard form `GRUB_CMDLINE_LINUX_DEFAULT="..."` and re-reads the file
+after editing it. Change the line in `/etc/default/grub` to that form
+(e.g. `GRUB_CMDLINE_LINUX_DEFAULT="quiet"`, double quotes, no trailing
+comment), or add `intel_iommu=on iommu=pt` inside the quotes by hand, then
+re-run the script.
+
+**`20-create-vm.sh` stopped half-way.** If `qm create` succeeded but a
+later `qm set --hostpci0` or `--virtiofs0` failed, every plain re-run
+refuses with `VMID 200 already exists`. Fix the cause first (the failing
+command's error; e.g. a wrong `GPU_PCI` or a missing directory mapping),
+then pick one:
+- **Resume** (keeps the VM): `RESUME=1` skips `qm create` for an existing
+  VMID and only runs the `qm set` lines whose setting is missing from
+  `qm config`:
+  ```bash
+  RESUME=1 scripts/host/20-create-vm.sh           # dry-run: shows what's left
+  RESUME=1 scripts/host/20-create-vm.sh --apply
+  ```
+  Or run the remaining `qm set` lines from the dry-run output by hand.
+- **Start over** (the VM has no OS installed yet, so nothing is lost):
+  ```bash
+  qm destroy 200
+  scripts/host/20-create-vm.sh --apply
+  ```
 
 **The guest's i915 driver fails to initialize the GPU** (blank/black
 console, or `dmesg` in the guest shows i915 errors). This is the scenario

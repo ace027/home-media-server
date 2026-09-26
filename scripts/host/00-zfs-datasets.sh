@@ -3,6 +3,8 @@ set -Eeuo pipefail
 # shellcheck source=scripts/lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 
+# .env first, then defaults, so .env values are not masked by the defaults.
+load_env
 POOL="${POOL:-tank}"
 
 usage() {
@@ -21,7 +23,6 @@ EOF
 }
 
 parse_common_args "$@"
-load_env
 require_root
 require_cmd zfs
 

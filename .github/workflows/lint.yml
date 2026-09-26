@@ -27,6 +27,18 @@ jobs:
       - name: Check pinned images
         run: scripts/ci/check-pinned-images.sh
 
+      - name: Pinned-images check rejects unpinned images
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          printf 'services:\n  web:\n    image: nginx:latest\n  cache:\n    image: redis\n' > "$d/compose.yaml"
+          rc=0
+          out=$(scripts/ci/check-pinned-images.sh "$d/compose.yaml" 2>&1) || rc=$?
+          printf '%s\n' "$out"
+          test "$rc" -eq 1
+          grep -q 'UNPINNED: nginx:latest' <<<"$out"
+          grep -q 'UNPINNED: redis' <<<"$out"
+
       - name: Install shellcheck
         run: |
           sudo apt-get update
@@ -43,17 +55,57 @@ jobs:
 
       - name: Sandbox mkdirs + verify (SKIP_HW)
         run: |
+          set -euo pipefail
           d=$(mktemp -d)
           DATA_ROOT="$d/data" APPDATA_ROOT="$d/appdata" scripts/mkdirs.sh
+          # Second run must be a no-op (idempotence).
+          out=$(DATA_ROOT="$d/data" APPDATA_ROOT="$d/appdata" scripts/mkdirs.sh 2>&1)
+          printf '%s\n' "$out"
+          grep -q 'created 0, existing 16' <<<"$out"
           DATA_ROOT="$d/data" SKIP_HW=1 scripts/vm/verify.sh
 
       - name: Host-script dry-runs against stubs
         run: |
+          set -euo pipefail
           d=$(mktemp -d)
           scripts/ci/make-host-stubs.sh "$d/bin"
           SOURCE_POOL=oldpool PATH="$d/bin:$PATH" scripts/host/05-import-pool.sh
           PATH="$d/bin:$PATH" scripts/host/00-zfs-datasets.sh
-          PATH="$d/bin:$PATH" scripts/host/20-create-vm.sh
+          out=$(PATH="$d/bin:$PATH" scripts/host/20-create-vm.sh 2>&1)
+          printf '%s\n' "$out"
+          grep -q 'DRY-RUN: qm create 200 .*--machine q35' <<<"$out"
+          grep -q 'DRY-RUN: qm set 200 --hostpci0 0000:03:00.0,pcie=1' <<<"$out"
+          grep -q 'DRY-RUN: qm set 200 --virtiofs0 media-data,cache=auto' <<<"$out"
+
+      - name: IOMMU/vfio dry-run against a fake SYSROOT
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          scripts/ci/make-host-stubs.sh "$d/bin"
+          mkdir -p "$d/root/proc" "$d/root/etc/kernel"
+          printf 'processor\t: 0\nvendor_id\t: GenuineIntel\n' > "$d/root/proc/cpuinfo"
+          echo 'root=ZFS=rpool/ROOT/pve-1 boot=zfs' > "$d/root/etc/kernel/cmdline"
+          out=$(SYSROOT="$d/root" PATH="$d/bin:$PATH" scripts/host/10-iommu-vfio.sh 2>&1)
+          printf '%s\n' "$out"
+          grep -qF "DRY-RUN: sed -i 's/\$/ intel_iommu=on iommu=pt/'" <<<"$out"
+          grep -q 'ids=8086:56a5,8086:4f92' <<<"$out"
+          grep -q 'softdep i915 pre: vfio-pci' <<<"$out"
+          grep -q 'DRY-RUN: update-initramfs -u -k all' <<<"$out"
+
+      - name: VM bootstrap dry-run against a fake SYSROOT
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          mkdir -p "$d/etc/apt/sources.list.d"
+          printf 'ID=debian\nVERSION_CODENAME=trixie\n' > "$d/etc/os-release"
+          # The Debian 13 installer's default: non-free (VA driver) is missing.
+          printf 'Types: deb\nURIs: http://deb.debian.org/debian/\nSuites: trixie\nComponents: main non-free-firmware\n' \
+            > "$d/etc/apt/sources.list.d/debian.sources"
+          out=$(SYSROOT="$d" MEDIA_USER=media scripts/vm/00-bootstrap.sh 2>&1)
+          printf '%s\n' "$out"
+          grep -qF "DRY-RUN: sed -i -E 's/^Components:.*/Components: main contrib non-free non-free-firmware/'" <<<"$out"
+          grep -q 'DRY-RUN: apt-get install -y .*intel-media-va-driver-non-free' <<<"$out"
+          grep -q 'DRY-RUN: docker network create proxy' <<<"$out"
 
       - name: Executable bits
         run: test -z "$(find scripts -name '*.sh' ! -path 'scripts/lib/*' ! -perm -u+x)"

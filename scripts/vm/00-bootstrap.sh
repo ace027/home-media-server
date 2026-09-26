@@ -3,6 +3,8 @@ set -Eeuo pipefail
 # shellcheck source=scripts/lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 
+# .env first, then defaults, so .env values are not masked by the defaults.
+load_env
 SYSROOT="${SYSROOT:-}"
 DIR_MAPPING_ID="${DIR_MAPPING_ID:-media-data}"
 DATA_ROOT="${DATA_ROOT:-/data}"
@@ -10,8 +12,8 @@ MEDIA_USER="${MEDIA_USER:-${SUDO_USER:-}}"
 
 usage() {
   cat <<EOF
-Bootstrap the Debian 13 media VM: enable non-free-firmware, install the
-Intel VA-API driver and tools, install Docker from Docker's apt repo, add
+Bootstrap the Debian 13 media VM: enable the contrib, non-free and
+non-free-firmware apt components, install the Intel VA-API driver and tools, install Docker from Docker's apt repo, add
 $MEDIA_USER to the docker/render/video groups, mount /data via virtiofs, and
 create the external "proxy" Docker network.
 
@@ -33,7 +35,9 @@ EOF
 }
 
 parse_common_args "$@"
-load_env
+require_safe_path SYSROOT "$SYSROOT" 1
+require_safe_path DATA_ROOT "$DATA_ROOT"
+require_match DIR_MAPPING_ID "$DIR_MAPPING_ID" '^[A-Za-z0-9_-]+$' "letters, digits, _ and - only"
 require_root
 
 [[ -n "$MEDIA_USER" ]] || die "MEDIA_USER is empty; set MEDIA_USER or run via sudo (SUDO_USER)"
@@ -49,17 +53,42 @@ if [[ "$os_codename" != "trixie" ]]; then
 fi
 
 DOCKER_CODENAME="${DOCKER_CODENAME:-$os_codename}"
+require_match DOCKER_CODENAME "$DOCKER_CODENAME" '^[a-z]+$' "a lowercase codename, e.g. trixie or bookworm"
 
-# --- 1: enable non-free-firmware in the Debian sources -------------------
+# --- 1: enable contrib, non-free and non-free-firmware --------------------
+# intel-media-va-driver-non-free lives in non-free, and the GPU firmware in
+# non-free-firmware. The Debian 13 installer writes only
+# "Components: main non-free-firmware", so each required component is
+# checked as a whole word on every Components: line, and all Components:
+# lines are rewritten if any one is missing.
 sources_file="${SYSROOT}/etc/apt/sources.list.d/debian.sources"
+legacy_sources="${SYSROOT}/etc/apt/sources.list"
+
+missing_components() {
+  # Prints each required component missing from any Components: line.
+  local line c re
+  while IFS= read -r line; do
+    for c in contrib non-free non-free-firmware; do
+      re="[[:space:]]${c}[[:space:]]"
+      [[ " ${line#Components:} " =~ $re ]] || printf '%s\n' "$c"
+    done
+  done < <(grep '^Components:' "$sources_file")
+}
+
 if [[ -f "$sources_file" ]]; then
-  if grep -q '^Components:' "$sources_file" && ! grep -q '^Components:.*non-free-firmware' "$sources_file"; then
+  grep -q '^Components:' "$sources_file" || die "no Components: line in $sources_file; add 'Components: main contrib non-free non-free-firmware' by hand and re-run"
+  missing="$(missing_components | sort -u | tr '\n' ' ')"
+  missing="${missing% }"
+  if [[ -n "$missing" ]]; then
+    log_info "enabling missing apt components ($missing) in $sources_file"
     run_sh "sed -i -E 's/^Components:.*/Components: main contrib non-free non-free-firmware/' \"$sources_file\""
   else
-    log_info "non-free-firmware already enabled in $sources_file"
+    log_info "contrib, non-free and non-free-firmware already enabled in $sources_file"
   fi
+elif [[ -f "$legacy_sources" ]] && grep -qE '^[[:space:]]*deb(-src)?[[:space:]]' "$legacy_sources"; then
+  die "$sources_file not found, but $legacy_sources has one-line 'deb' entries; convert them first with 'sudo apt modernize-sources', then re-run"
 else
-  log_warn "debian.sources not found at $sources_file; skipping firmware component check"
+  log_warn "debian.sources not found at $sources_file; skipping apt component check (the install step fails if non-free is not enabled)"
 fi
 
 # --- 2: apt update --------------------------------------------------------
