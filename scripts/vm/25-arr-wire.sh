@@ -71,8 +71,8 @@ Each *arr (${ARRS[*]}):
   indexers and all remote path mappings.
 Prowlarr:
   delete torrent indexers, indexer proxies and non-SABnzbd clients; upsert
-  its SABnzbd client (empty category); upsert the 6 apps (fullSync;
-  matched by baseUrl host, then name) and delete the rest (e.g.
+  its SABnzbd client (category "*", SAB's default); upsert the 6 apps
+  (fullSync; matched by baseUrl host, then name) and delete the rest (e.g.
   animesonarr); then, only if this run changed anything,
   ApplicationIndexerSync. Finally resume the SAB queue if
   it is paused.
@@ -321,9 +321,11 @@ wire_prowlarr() {
 
   api "$p" GET "$base/downloadclient" >"$W/p-dc.json"
   delete_ids "$p" "$base/downloadclient" "$W/p-dc.json" 'select(.implementation != "Sabnzbd")'
-  # Prowlarr's client gets no category: the schema default "prowlarr" is
-  # not a SAB category, and the save-time category test would reject it.
-  upsert_sab_client "$p" "$W/p-dc.json" category ""
+  # Prowlarr's client uses SAB's default category "*": the schema default
+  # "prowlarr" is not a SAB category (the save-time TestCategory rejects
+  # it), and an empty one fails the validator's Category NotEmpty check
+  # (HTTP 400 without forceSave). "*" always exists in SAB.
+  upsert_sab_client "$p" "$W/p-dc.json" category "*"
 
   api "$p" GET "$base/applications" >"$apps"
   api "$p" GET "$base/applications/schema" >"$schema"

@@ -524,8 +524,8 @@ for spec in "sonarr-4k tvCategory tv-4k" "radarr-4k movieCategory movies-4k" "li
     || fail wire-apply "$svc SAB client POST"
 done
 bodies "POST prowlarr /api/v1/downloadclient" | jq -e --arg k "$KEY" \
-  '(.fields | map({(.name): .value}) | add) as $f | $f.host == "sabnzbd" and $f.apiKey == $k and $f.category == ""' >/dev/null \
-  || fail wire-apply "prowlarr SAB client POST (category must be empty)"
+  '(.fields | map({(.name): .value}) | add) as $f | $f.host == "sabnzbd" and $f.apiKey == $k and $f.category == "*"' >/dev/null \
+  || fail wire-apply "prowlarr SAB client POST (category must be \"*\")"
 # SAB never gets a "prowlarr" category (it keeps its 7: *, and the 6 TRaSH ones).
 ! grep -q 'keyword=prowlarr' "$STUB_LOG" || fail wire-apply "a prowlarr SAB category was created"
 # Root folders from the wiring table.
@@ -584,16 +584,51 @@ bodies "POST prowlarr /api/v1/applications" | jq -se '
 ok "Prowlarr apps match by baseUrl host, then name; stale hosts are never reused"
 
 # 8c. An existing Prowlarr SAB client with the schema's "prowlarr" category
-# is PUT with an empty one (category is compared).
+# is PUT with SAB's default "*" (category is compared).
 use_fixtures converged
 jq 'map(.fields |= map(if .name == "category" then .value = "prowlarr" else . end))' \
   "$FIX/converged/prowlarr/GET_api_v1_downloadclient.json" > "$T/fx/prowlarr/GET_api_v1_downloadclient.json"
 cp "$FIX/initial/prowlarr/POST_api_v1_command.json" "$T/fx/prowlarr/"
 run_capture env STUB_RUNNING="$CORE_UP" "$WIRE" --apply
 expect wire-prowlarr-category 0
-bodies "PUT prowlarr /api/v1/downloadclient/3" | jq -e '.id == 3 and ((.fields | map({(.name): .value}) | add).category == "")' >/dev/null \
-  || fail wire-prowlarr-category "Prowlarr SAB client not PUT with an empty category"
-ok "an existing Prowlarr SAB client with category \"prowlarr\" is fixed to an empty category"
+bodies "PUT prowlarr /api/v1/downloadclient/3" | jq -e '.id == 3 and ((.fields | map({(.name): .value}) | add).category == "*")' >/dev/null \
+  || fail wire-prowlarr-category "Prowlarr SAB client not PUT with category \"*\""
+ok "an existing Prowlarr SAB client with category \"prowlarr\" is fixed to \"*\""
+
+# 8d. The stub models Prowlarr's Category NotEmpty validation: an empty
+# category is a 400 on POST and PUT (unless forceSave=true). A copy of the
+# wire script that sends "" fails; the real one (above) does not. The copy
+# lives in a scratch tree whose scripts/lib links to the real libs.
+use_fixtures initial
+mkdir -p "$T/ec/scripts/vm"
+ln -sfn "$REPO/scripts/lib" "$T/ec/scripts/lib"
+[[ ! -f "$REPO/.env" ]] || ln -sf "$REPO/.env" "$T/ec/.env"
+sed 's/upsert_sab_client "\$p" "\$W\/p-dc.json" category "\*"/upsert_sab_client "$p" "$W\/p-dc.json" category ""/' \
+  "$WIRE" > "$T/ec/scripts/vm/25-arr-wire.sh"
+chmod +x "$T/ec/scripts/vm/25-arr-wire.sh"
+grep -q 'p-dc.json" category ""$' "$T/ec/scripts/vm/25-arr-wire.sh" \
+  || fail wire-prowlarr-empty-cat "could not make the empty-category copy"
+run_capture env STUB_RUNNING="$CORE_UP" "$T/ec/scripts/vm/25-arr-wire.sh" --apply
+expect wire-prowlarr-empty-cat 1 'POST prowlarr /api/v1/downloadclient -> HTTP 400'
+bodies "POST prowlarr /api/v1/downloadclient" | jq -e '(.fields | map({(.name): .value}) | add).category == ""' >/dev/null \
+  || fail wire-prowlarr-empty-cat "the copy did not send an empty category"
+# Direct stub calls: PUT with "" -> 400 + validation body; forceSave=true or
+# "*" -> 200; a non-downloadclient path is unaffected.
+printf '%s' '{"id":3,"fields":[{"name":"category","value":""}]}' > "$T/empty-cat.json"
+printf '%s' '{"id":3,"fields":[{"name":"category","value":"*"}]}' > "$T/star-cat.json"
+for spec in "400 PUT downloadclient/3 empty-cat" "400 POST downloadclient empty-cat" \
+            "200 PUT downloadclient/3?forceSave=true empty-cat" "200 PUT downloadclient/3 star-cat" \
+            "200 POST applications empty-cat"; do
+  read -r want m p f <<<"$spec"
+  got="$(curl -sS -o "$T/stub-out.json" -w '%{http_code}' -X "$m" --data-binary "@$T/$f.json" \
+    "http://172.30.0.11:9696/api/v1/$p" || true)"
+  [[ "$got" == "$want" ]] || fail wire-prowlarr-empty-cat "stub: $m $p ($f) gave HTTP $got, want $want"
+  if [[ "$want" == 400 ]]; then
+    jq -e '.[0].propertyName == "Category" and .[0].isWarning' "$T/stub-out.json" >/dev/null \
+      || fail wire-prowlarr-empty-cat "stub: no validation-error body for $m $p"
+  fi
+done
+ok "an empty Prowlarr SAB category is rejected with HTTP 400 (stub models the validator)"
 
 # ==============================================================================
 # 9. Idempotency on converged fixtures (masked ******** everywhere)

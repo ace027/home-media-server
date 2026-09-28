@@ -62,6 +62,10 @@ exit 7. Strips apikey= and X-Plex-Token= from the query, then:
     wins over everything;
   - STUB_EXPECT_KEY=<key>: a request whose X-Api-Key / X-Plex-Token header
     or apikey= parameter differs gets HTTP 401;
+  - a POST/PUT to prowlarr /api/v1/downloadclient[/<id>] whose body has a
+    "category" field with an empty value, and no forceSave=true in the
+    query, gets HTTP 400 with a validation-error body (Prowlarr's
+    Category NotEmpty warning, which Create/Update reject);
   - writes the body to -o (or stdout), prints -w with %{http_code}
     substituted, and, like real curl --fail-with-body / -f, exits 22 when
     the code is >= 400.
@@ -427,10 +431,24 @@ httpf="${STUB_FIXTURES:-/nonexistent}/$svc/$name.http"
 if [[ -n "${STUB_EXPECT_KEY:-}" && "$reqkey" != "$STUB_EXPECT_KEY" ]]; then
   code=401
 fi
+# Prowlarr's SabnzbdSettingsValidator: Category NotEmpty (a warning, which
+# Create/Update reject unless forceSave=true) -> 400 with validation errors.
+vbody=""
+if [[ "$svc" == prowlarr && ( "$method" == POST || "$method" == PUT ) && -n "$data" \
+      && "${path%%\?*}" =~ ^/api/v1/downloadclient(/[0-9]+)?$ && "&${path#*\?}&" != *"&forceSave=true&"* ]]; then
+  if [[ "$data" == @* ]]; then b="$(cat "${data#@}" 2>/dev/null || true)"; else b="$data"; fi
+  if jq -e '[.fields[]? | select(.name == "category")] | length > 0 and all(.[]; (.value // "") == "")' \
+       >/dev/null 2>&1 <<<"$b"; then
+    code=400
+    vbody='[{"propertyName":"Category","errorMessage":"'"'"'Category'"'"' must not be empty.","severity":"warning","isWarning":true}]'
+  fi
+fi
 forced="STUB_HTTP_${svc//-/_}"
 [[ -z "${!forced:-}" ]] || code="${!forced}"
 
-if [[ -n "$chosen" ]]; then
+if [[ -n "$vbody" && "$code" == 400 ]]; then
+  body="$vbody"
+elif [[ -n "$chosen" ]]; then
   body="$(cat "$chosen")"
 elif [[ "$code" -ge 400 ]]; then
   body="{\"message\":\"stub HTTP $code\"}"
