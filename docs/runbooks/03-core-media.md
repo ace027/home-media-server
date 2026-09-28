@@ -189,6 +189,7 @@ Example (from the CI fixtures):
 [INFO] integrity ok: radarr/radarr.db
 [INFO] integrity ok: lidarr/lidarr.db
 [INFO] integrity ok: prowlarr/prowlarr.db
+DRY-RUN: install -d -m 700 -o 0 -g 0 <tmp>/appdata/.rollback
 DRY-RUN: mkdir -p -m 700 <tmp>/appdata/.rollback/20260928-120000
 DRY-RUN: mv -T <tmp>/appdata/.staging/20260928-120000/lidarr <tmp>/appdata/lidarr
 DRY-RUN: mv -T <tmp>/appdata/.staging/20260928-120000/plex <tmp>/appdata/plex
