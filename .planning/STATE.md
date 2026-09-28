@@ -1,13 +1,13 @@
 # Project State
 
 ## Current Position
-- **Phase**: 2 of 6 (executing)
-- **Status**: Phase 2 executing — waves 1–2 complete (02-01, 02-02, 02-03); wave 3 (02-04) next
-- **Last Activity**: Phase 2 wave 2 execution (2026-09-28)
+- **Phase**: 2 of 6 (executed, pending review)
+- **Status**: Phase 2 complete — all plans executed successfully; owner hardware acceptance (runbook 03) pending
+- **Last Activity**: Phase 2 execution (2026-09-28)
 
 ## Progress
 ```
-[#######.............] 35% — 8/23 plans complete
+[#######.............] 39% — 9/23 plans complete
 ```
 
 ## Recent Decisions
@@ -36,6 +36,6 @@
 - Phase 1 PR: #3 `dev` → `main` (https://github.com/ace027/home-media-server/pull/3; supersedes #2, which was opened from a now-retired `claude/` branch); includes review fixes 5d72178, 0a01d43
 
 ## Next Action
-Run `/legion:build` to execute Phase 2: Core Media Automation
+Run `/legion:review` to verify Phase 2: Core Media Automation. After the review, the owner runs `docs/runbooks/03-core-media.md` on media-01 and fills in its Acceptance record
 
 Hardware state (2026-09-28): pool imported on the new host and trimmed (autotrim on); library copied into `tank/data/media` and verified (movies 89, tv 820, anime-tv 1058 files; no music on the old pool); ownership 1000:1000; originals kept in `/tank/{movies,shows,anime}` plus `tank@pre-migration` until Phase 2 confirms the library. IOMMU/vfio active (A380 + audio on vfio-pci), ZFS ARC capped at 2 GB. VM 200 `media-01` (Debian 13) at 192.168.50.16 with Docker, `/data` over virtiofs and the TRaSH tree. Old app configs are in `/tank/migration/old-docker-2026-09-27.tar.zst` for Phase 2.
