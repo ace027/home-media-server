@@ -27,8 +27,10 @@ Guidance for Claude Code sessions working in this repository.
 ## Checks to run before pushing
 These mirror `.github/workflows/lint.yml`:
 ```bash
-cp -n .env.example .env && docker compose config -q && scripts/ci/check-pinned-images.sh
-shellcheck -x scripts/lib/common.sh scripts/mkdirs.sh scripts/host/*.sh scripts/vm/*.sh scripts/ci/*.sh
+cp -n .env.example .env && docker compose config -q
+COMPOSE_PROFILES=jellyfin scripts/ci/check-pinned-images.sh && scripts/ci/check-min-versions.sh
+shellcheck -x scripts/lib/*.sh scripts/mkdirs.sh scripts/host/*.sh scripts/vm/*.sh scripts/ci/*.sh
 yamllint -s .
+for t in scripts/ci/test-*.sh; do bash "$t"; done
 d=$(mktemp -d) && DATA_ROOT=$d/data APPDATA_ROOT=$d/appdata scripts/mkdirs.sh && DATA_ROOT=$d/data SKIP_HW=1 scripts/vm/verify.sh
 ```

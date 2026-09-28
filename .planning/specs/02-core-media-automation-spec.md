@@ -155,7 +155,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
 **`scripts/vm/10-restore-appdata.sh`** (VM, `sudo` with `--apply`)
 - Modes:
   - `[--stage <ts>] [--apply]` restores the given stage, or the newest one.
-  - `--rollback <ts> [--apply]` moves `.rollback/<ts>/<svc>` back over `/opt/appdata/<svc>`; the current dirs go to `.rollback/<ts>-undone`.
+  - `--rollback <ts> [--apply]` undoes restore `<ts>`. Every service listed in `.rollback/<ts>/installed`, and every service with a saved dir, moves from `/opt/appdata/<svc>` to `.rollback/<ts>-undone/<svc>`; then each saved `.rollback/<ts>/<svc>` moves back into place. A service with no saved dir (a first restore) is left absent (`[INFO] <svc>: undone (no previous dir)`). `.rollback/<ts>/sabnzbd-admin` goes back into the undone config, `.rollback/<ts>-undone/sabnzbd/admin`, never into the live dir. If `installed` is missing (a restore made before the list existed), it warns and rolls back only the saved dirs. It refuses (exit 1) on an unexpected entry in `.rollback/<ts>` or `installed`, or if `.rollback/<ts>-undone/<svc>` already exists.
 - Env: `APPDATA_ROOT` and `PUID`/`PGID` come from `.env`. Flags are used instead of env vars because `sudo` resets the environment.
 - Preconditions:
   - `require_cmd sqlite3 jq docker setpriv`.
@@ -168,6 +168,8 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
      - If `$APPDATA_ROOT/<svc>` is empty, `rmdir` it.
      - If it is non-empty, `mv` it to `$APPDATA_ROOT/.rollback/<ts>/<svc>`.
      - Then `mv -T` staging/<svc> to `$APPDATA_ROOT/<svc>`. `-T` means a leftover dir can never be nested into.
+     - Right after each `mv -T`, append `<svc>` to `.rollback/<ts>/installed` (the `installed` list, one name per line; refuse if it is a symlink). `--rollback` uses it to undo services that had no previous dir. The dry-run prints `DRY-RUN: record installed services in <path>: <svcs>`.
+     - **Failure after the swap:** from the first swap on, a non-zero exit prints `restore <ts> failed after the swap started (exit <rc>); steps not completed: <steps>`, that a re-run can't resume the (partly) empty stage, and `recover: sudo scripts/vm/10-restore-appdata.sh --rollback <ts> --apply` or, on the host, `qm rollback 200 pre-phase2`, then re-push and restore again.
   3. **Ownership:** `chown -R $PUID:$PGID` and `chmod 700` on each restored dir (lsio `abc` runs as `PUID`, so 700 is readable by the app). Delete `*.pid`.
   4. **Plex prefs:** in `plex/Library/Application Support/Plex Media Server/Preferences.xml`, set the attribute `autoEmptyTrash="0"` (replace it if present, else insert it before `/>`), then check with `grep -q`. Also report `TranscoderTempDirectory` and **remove that attribute** if its value doesn't start with `/config` or `/transcode`, so a stale path can't break transcoding. If the file is missing: `[WARN]`, and runbook step 6 sets the trash pref in the UI before any scan.
   5. **SABnzbd, offline, so its first start can't use old paths or queues.** In `sabnzbd/sabnzbd.ini` `[misc]`, set `download_dir = /data/usenet/incomplete` and `complete_dir = /data/usenet/complete` (sed on those two keys). Move `sabnzbd/admin/` to `.rollback/<ts>/sabnzbd-admin`: this is the old queue and history, whose incomplete files don't exist on the new pool. Categories are fixed online by `25-arr-wire.sh --only sab`.
@@ -191,7 +193,8 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
 **`scripts/lib/arr.sh`** (sourced after `common.sh`)
 - `arr_port <svc>`: sonarr* 8989, radarr* 7878, lidarr 8686, prowlarr 9696, sabnzbd 8080, plex 32400, seerr 5055, tautulli 8181, jellyfin 8096. Anything else dies.
 - `arr_base <svc>`: `/api/v3` for sonarr* and radarr*, `/api/v1` for lidarr and prowlarr.
-- `svc_ip <svc>`: `docker inspect -f '{{with index .NetworkSettings.Networks "proxy"}}{{.IPAddress}}{{end}}' "$(dc ps -q <svc>)"`, where `dc` = `docker compose --project-directory "$REPO_ROOT"`. Dies if empty.
+- `arr_dc <compose args…>`: `docker compose --project-directory "$REPO_ROOT"`. Compose resolves relative `COMPOSE_FILE` entries (`compose.yaml:compose.lan.yaml` from `.env`) against the current dir, so on every call `arr_dc` makes each relative entry absolute under `$REPO_ROOT` (split on `COMPOSE_PATH_SEPARATOR`, default `:`) and re-exports `COMPOSE_FILE`. `DC=(arr_dc)`; the VM scripts run compose only through it.
+- `svc_ip <svc>`: `docker inspect -f '{{with index .NetworkSettings.Networks "proxy"}}{{.IPAddress}}{{end}}' "$(arr_dc ps -q <svc>)"`. Dies if empty.
 - `svc_key <svc>`: reads with `sed -n` or `jq`, never `source`, and validates per service:
   - *arr/Prowlarr: `<ApiKey>` from `config.xml`; `^[a-f0-9]{32}$`.
   - SABnzbd: `api_key = ` from `sabnzbd.ini`; `^[a-f0-9]{32}$`.
@@ -202,8 +205,9 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
   - Calls curl `-sS --fail-with-body --max-time 30 -K -`. The curl config on stdin contains the `url = "http://<ip>:<port><path>"` line and the `header = "X-Api-Key: …"` line (`X-Plex-Token` for Plex), or for SABnzbd the full URL with `apikey=…`. Keys never appear in argv.
   - The body goes via `--data-binary @<body-file>` with `header = "Content-Type: application/json"` in the same stdin config. A body file and a stdin config can be combined.
   - Prints the body. Non-2xx makes it exit 1 with `<METHOD> <svc> <path> -> HTTP <code>`, without printing the key.
+  - SABnzbd reports API errors as HTTP 200. A 2xx SABnzbd response whose top level has `"status": false` or a non-null `error` counts as an error: `<METHOD> sabnzbd <path> -> SAB error: <msg>` on stderr (the key replaced by `***`), return 1. `get_config`, `queue` and `history` responses (`{"config"|"queue"|"history": {…}}`) are not affected.
 - `sab_api <mode> [k=v …]` builds `/api?mode=<mode>&output=json&<k=v urlencoded via jq @uri>` and calls `api`. It is for read-only modes (`get_config`, `version`, `queue`, `history` listing). Every SAB change (`set_config`, `del_config`, queue/history delete, `pause`, `resume`) goes through `arr_mutate sabnzbd GET <path>`, so it is dry-run by default and counted.
-- `wait_cmd <svc> <command-json-response>`: polls `GET {base}/command/<id>` every 3 s until `status` is `completed` (return 0) or `failed`/`aborted` (exit 1), with a 600 s timeout.
+- `wait_cmd <svc> <command-json-response>`: polls `GET {base}/command/<id>` every `WAIT_INTERVAL` s (default 3) until `status` is `completed` (return 0) or `failed`/`aborted`/`cancelled`/`orphaned` (exit 1). After `WAIT_TIMEOUT` s (default 600) it exits 1 with `command <id> still queued in <svc>; re-running is safe; raise WAIT_TIMEOUT (seconds) for large libraries (status '<status>' after <n>s)`.
 - `arr_mutate <svc> <METHOD> <path> [body-file]`:
   - Dry-run: prints `DRY-RUN: <METHOD> <svc> <path> <compact body>` with `apiKey`, `password` and `*Key` fields replaced by `***`.
   - `--apply`: calls `api`.
@@ -218,6 +222,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
   - `sabnzbd` and `prowlarr` are **not running**.
   - `sonarr`, `sonarr-anime`, `radarr` and `lidarr` are running and healthy.
   - Each new root dir exists (`test -d`).
+  - Every item whose `path` is under an old root has a folder `<new root>/<folder name>` on disk (`$DATA_ROOT/...`), where the folder name is the last component of its `path`. Otherwise the rescan would drop its file records while it stays monitored. Checked for all three instances before any change, also in dry-run; on failure exit 1 with `folder missing on the new pool; nothing changed: <paths>`.
 - Per instance:
   1. `GET {base}/config/mediamanagement`, set `autoUnmonitorPreviouslyDownloadedEpisodes` (Sonarr) or `…Movies` (Radarr) to `false`, and `PUT` it, only if it differs.
   2. `POST {base}/rootfolder {"path":"<new>"}` if missing.
@@ -259,7 +264,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
   - Delete all `remotepathmapping` entries.
 - **Prowlarr:**
   - Delete indexers with `protocol=="torrent"` and all `indexerproxy` entries.
-  - Delete Prowlarr download clients whose `implementation` ≠ `Sabnzbd`, and upsert its SAB client the same way, without a category.
+  - Delete Prowlarr download clients whose `implementation` ≠ `Sabnzbd`, and upsert its SAB client the same way, with an empty `category` field (`""`): the schema default `prowlarr` is not a SAB category, and Prowlarr's save-time test would reject it.
   - Upsert applications. **Match an existing app by the host in its `baseUrl`, then by name.** Delete apps whose host is `animesonarr`, `nzbget` or `qbittorrent`, or that are unmatched.
 
     | name | implementation | baseUrl | syncCategories |
@@ -289,16 +294,20 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
 - Apply:
   1. **Preflight every `move` row:** `dst` must not exist, and `src` must exist and sit under the expected HD root. Any failure exits 1 before anything is moved.
   2. Then, per row:
-     - `mv "$src" "$dst"`, where `dst` is `/data/media/{movies-4k|tv-4k}/<basename>`.
-     - Build the add payload from `GET {4k}/movie/lookup/tmdb?tmdbId=<id>` or `GET {4k}/series/lookup?term=tvdb:<id>`. Set `qualityProfileId`, `rootFolderPath`, `path=dst` and `monitored=true`, plus `addOptions` `{searchForMovie:false}` or `{searchForMissingEpisodes:false,monitor:"existing"}`. `POST` it.
+     - Record `prior`, the HD item's monitored state from the plan's `GET` (before any change), as compact JSON: `{"m":<bool>}`, plus `"s":{"<seasonNumber>":<bool>,…}` for series.
+     - `mv "$src" "$dst"`, where `dst` is `/data/media/{movies-4k|tv-4k}/<basename>`. Then append the row to `…/split-4k-<ts>.manifest.tsv` with `new_id` `-` and `prior`, so a failure later in the row is still undoable.
+     - Build the add payload from `GET {4k}/movie/lookup/tmdb?tmdbId=<id>` or `GET {4k}/series/lookup?term=tvdb:<id>`. Set `qualityProfileId`, `rootFolderPath`, `path=dst` and `monitored=true`, plus `addOptions` `{searchForMovie:false}` or `{searchForMissingEpisodes:false,monitor:"existing"}`. `POST` it. Rewrite the row's manifest line with the id created in the 4K instance.
      - Rescan the 4K item with `wait_cmd`.
      - Ensure the HD tag `4k-only` exists, then `PUT` the HD item with `monitored=false` and the tag added. For series, also set every season `monitored=false`.
-     - Append the row to `…/split-4k-<ts>.manifest.tsv`, adding the ids created in the 4K instance.
+     - Rescan the HD item (`{"name":"RescanMovie","movieId":<id>}` or `{"name":"RescanSeries","seriesId":<id>}`) with `wait_cmd`, so HD drops the moved files now rather than at its next refresh. With `--apply`, each rescan logs `[INFO] POST <svc> /api/v3/command {"name":"RescanMovie|RescanSeries"}; waiting`; the HD one follows the `[INFO] PUT <hd> /api/v3/<kind>/<id>` line.
+  3. Manifest columns: `kind instance id title src dst files action new_id prior`.
 - Undo, in reverse manifest order:
   1. `mv dst src`.
   2. `DELETE` the 4K item with `deleteFiles=false`.
-  3. Set the HD item back to monitored (seasons included) and remove the tag.
+  3. Restore the HD item's monitored state from `prior`: the item's `monitored`, and each season listed in `prior` (a season added since the split keeps its current state). Remove the tag.
   4. Rescan the HD item.
+  5. After the last row, rename the manifest to `<manifest>.undone`.
+  - A manifest with the older header (ending at `new_id`, no `prior`) is accepted with `[WARN] <manifest> has no prior column (older manifest): every HD item and season is re-monitored`, and step 3 sets the item and every season to monitored. Any other header exits 1.
 
 **`scripts/vm/verify-media.sh`** (VM, as `media`; read-only)
 - Output: `PASS|FAIL|SKIP <id> <detail>` lines, then `RESULT: <n> pass, <n> fail, <n> skip`. Exit 1 on any FAIL.
@@ -571,6 +580,11 @@ Done during `/legion:plan 2`, not part of the build: PROJECT.md (R5, R12, decisi
 | 27 | Wire, remap, `arr.sh` | SAB changes via `arr_mutate`; `--only sab` pauses, full run resumes; rescan/sync only after changes | Plan critique |
 | 28 | R2.11, data flow 11 | Seerr's Plex connection and 4K libraries | Plan critique |
 | 29 | Min-versions, stubs | `NO-IMAGES`; `STUB_IMAGES`; curl stub exit 22 | Plan critique |
+| 30 | `30-split-4k.sh` apply, manifest, undo | HD rescan after the HD `PUT`; manifest column `prior`; undo restores the prior monitored state (older manifests warn and re-monitor) | Phase 2 review cycle 1 |
+| 31 | `10-restore-appdata.sh` swap, `--rollback` | `.rollback/<ts>/installed` list; rollback moves every installed service to `.rollback/<ts>-undone` and puts `sabnzbd-admin` back into the undone config; failure after the swap prints the recovery commands | Phase 2 review cycle 1 |
+| 32 | `20-arr-remap.sh` preconditions | Every item to move must have its folder under the new root, else exit 1 with nothing changed | Phase 2 review cycle 1 |
+| 33 | `25-arr-wire.sh` Prowlarr | Prowlarr's SAB client has an empty `category` | Phase 2 review cycle 1 |
+| 34 | `arr.sh` `api`, `arr_dc`, `wait_cmd` | SAB `status:false` counts as an error; `arr_dc` makes `COMPOSE_FILE` absolute; `wait_cmd` timeout message says re-running is safe and names `WAIT_TIMEOUT` | Phase 2 review cycle 1 |
 
 ## Complexity Assessment
 

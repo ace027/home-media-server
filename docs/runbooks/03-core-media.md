@@ -60,6 +60,15 @@ Plan on a few hours: the Plex rescans (step 6) and the test downloads
   ssh -o BatchMode=yes media@192.168.50.16 true && echo ssh-ok
   ```
   The last command must print `ssh-ok` without asking for a password.
+- Update the host's repo checkout, so it has this phase's
+  `scripts/host/30-push-appdata.sh`. The clone from runbook 01 predates
+  this phase. **On the Proxmox host:**
+  ```bash
+  cd /root/home-media-server
+  git fetch && git checkout dev && git pull
+  test -x scripts/host/30-push-appdata.sh && echo push-script-ok
+  ```
+  The last command must print `push-script-ok`.
 - Take the VM rollback point. **On the Proxmox host:**
   ```bash
   qm snapshot 200 pre-phase2 --vmstate 0
@@ -76,8 +85,12 @@ Plan on a few hours: the Plex rescans (step 6) and the test downloads
   ```
   Edit `.env`: set `LAN_IP=192.168.50.16` and uncomment the line
   `COMPOSE_FILE=compose.yaml:compose.lan.yaml`, which publishes the admin
-  UIs on the LAN until Phase 3. Then check the config and pull the images
-  (this only downloads; nothing starts):
+  UIs on the LAN until Phase 3. `LAN_IP` must be the VM's own LAN
+  address, never `0.0.0.0`: the admin UIs bind only to it, and
+  `25-arr-wire.sh` adds it to SABnzbd's host whitelist (it stops with
+  `invalid LAN_IP '0.0.0.0': LAN_IP must be the VM's own LAN address`).
+  Then check the config and pull the images (this only downloads;
+  nothing starts):
   ```bash
   docker compose config -q && docker compose pull
   ```
@@ -117,9 +130,11 @@ matching `/data/media/*` folder on the host and remove it.
 
 ## 2. Restore app configs
 
-**On the Proxmox host**, from the repo checkout there, preview the push:
+**On the Proxmox host**, from the repo checkout there (updated in
+Prerequisites), preview the push:
 
 ```bash
+cd /root/home-media-server
 VM_HOST=media@192.168.50.16 scripts/host/30-push-appdata.sh
 ```
 
@@ -154,6 +169,7 @@ The dry-run already tested ssh and that the stage dir doesn't exist. Push
 it (the timestamp is picked now; the output names it):
 
 ```bash
+cd /root/home-media-server
 VM_HOST=media@192.168.50.16 scripts/host/30-push-appdata.sh --apply
 ```
 
@@ -183,6 +199,7 @@ DRY-RUN: mv -T <tmp>/appdata/.staging/20260928-120000/seerr <tmp>/appdata/seerr
 DRY-RUN: mv -T <tmp>/appdata/.staging/20260928-120000/sonarr <tmp>/appdata/sonarr
 DRY-RUN: mv -T <tmp>/appdata/.staging/20260928-120000/sonarr-anime <tmp>/appdata/sonarr-anime
 DRY-RUN: mv -T <tmp>/appdata/.staging/20260928-120000/tautulli <tmp>/appdata/tautulli
+DRY-RUN: record installed services in <tmp>/appdata/.rollback/20260928-120000/installed: lidarr plex prowlarr radarr sabnzbd seerr sonarr sonarr-anime tautulli
 DRY-RUN: chown -R 1000:1000 <tmp>/appdata/lidarr
 DRY-RUN: chmod 700 <tmp>/appdata/lidarr
 DRY-RUN: find <tmp>/appdata/lidarr -name '*.pid' -delete
@@ -227,7 +244,9 @@ DRY-RUN: rmdir <tmp>/appdata/.staging/20260928-120000
 Check that:
 - the five `integrity ok:` lines are there (these checks run even in the
   dry-run; a failed check stops the script before anything moves);
-- all nine services get a `mv -T` line;
+- all nine services get a `mv -T` line, followed by
+  `DRY-RUN: record installed services in .../.rollback/<ts>/installed`
+  (the list `--rollback` uses to undo them);
 - no `[WARN] <svc> UrlBase=... Port=...` line appears. If one does, finish
   the restore, then fix it before step 3 (Troubleshooting, "UrlBase").
   A `[WARN] plex: stale TranscoderTempDirectory` line is expected when the
@@ -239,6 +258,9 @@ Apply it:
 sudo scripts/vm/10-restore-appdata.sh --stage <ts> --apply
 jq '{created, files, items_with_files, plex_watched, warnings}' /opt/appdata/.migration/baseline.json
 ```
+
+If the apply stops with `restore <ts> failed after the swap started`,
+don't re-run it: see Troubleshooting, "Restore failed after the swap".
 
 `baseline.json` is what step 6 and step 10 compare against. If
 `plex_watched` is `-1`, the Plex database couldn't be read: `plex-watched`
@@ -297,11 +319,22 @@ Check that:
 - the `[INFO] <svc>: <n> items` counts match your library (the number of
   series or movies in each app).
 
-Apply it:
+Before any change, even in the dry-run, the remap checks that every
+title's folder already exists under its new root on the pool. If one is
+missing, it stops with `folder missing on the new pool; nothing changed:
+<paths>` (Troubleshooting, "Remap: folder missing").
+
+Apply it. Each instance's rescan must finish within `WAIT_TIMEOUT`
+seconds (default 600). For a large library, raise it:
 
 ```bash
-scripts/vm/20-arr-remap.sh --apply
+WAIT_TIMEOUT=1800 scripts/vm/20-arr-remap.sh --apply
 ```
+
+If a rescan still takes longer, the remap stops with `command <id> still
+queued in <svc>; re-running is safe; raise WAIT_TIMEOUT (seconds) for
+large libraries`. Re-run it with a larger `WAIT_TIMEOUT`; the re-run
+skips what is already done.
 
 A dry-run afterwards finds nothing left to do:
 
@@ -400,7 +433,7 @@ DRY-RUN: POST lidarr /api/v1/downloadclient {"enable":true,"protocol":"usenet","
 DRY-RUN: DELETE prowlarr /api/v1/indexer/1
 DRY-RUN: DELETE prowlarr /api/v1/indexerproxy/1
 DRY-RUN: DELETE prowlarr /api/v1/downloadclient/1
-DRY-RUN: POST prowlarr /api/v1/downloadclient {"enable":true,"protocol":"usenet","priority":1,"name":"SABnzbd","implementationName":"SABnzbd","implementation":"Sabnzbd","configContract":"SabnzbdSettings","tags":[],"fields":[{"order":0,"name":"host","value":"sabnzbd","privacy":"normal"},{"order":1,"name":"port","value":8080,"privacy":"normal"},{"order":2,"name":"useSsl","value":false,"privacy":"normal"},{"order":3,"name":"urlBase","privacy":"normal"},{"order":4,"name":"apiKey","privacy":"apiKey","value":"***"},{"order":5,"name":"username","privacy":"userName"},{"order":6,"name":"password","privacy":"password"},{"order":7,"name":"category","value":"prowlarr","privacy":"normal"},{"order":8,"name":"priority","value":-100,"privacy":"normal"}],"removeCompletedDownloads":true,"removeFailedDownloads":true}
+DRY-RUN: POST prowlarr /api/v1/downloadclient {"enable":true,"protocol":"usenet","priority":1,"name":"SABnzbd","implementationName":"SABnzbd","implementation":"Sabnzbd","configContract":"SabnzbdSettings","tags":[],"fields":[{"order":0,"name":"host","value":"sabnzbd","privacy":"normal"},{"order":1,"name":"port","value":8080,"privacy":"normal"},{"order":2,"name":"useSsl","value":false,"privacy":"normal"},{"order":3,"name":"urlBase","privacy":"normal"},{"order":4,"name":"apiKey","privacy":"apiKey","value":"***"},{"order":5,"name":"username","privacy":"userName"},{"order":6,"name":"password","privacy":"password"},{"order":7,"name":"category","value":"","privacy":"normal"},{"order":8,"name":"priority","value":-100,"privacy":"normal"}],"removeCompletedDownloads":true,"removeFailedDownloads":true}
 DRY-RUN: PUT prowlarr /api/v1/applications/2 {"syncLevel":"fullSync","name":"Sonarr","implementationName":"Sonarr","implementation":"Sonarr","configContract":"SonarrSettings","tags":[],"fields":[{"order":0,"name":"prowlarrUrl","value":"http://prowlarr:9696","privacy":"normal"},{"order":1,"name":"baseUrl","value":"http://sonarr:8989","privacy":"normal"},{"order":2,"name":"apiKey","privacy":"apiKey","value":"***"},{"order":3,"name":"syncCategories","value":[5000,5010,5020,5030,5040,5045,5050,5090],"privacy":"normal"},{"order":4,"name":"animeSyncCategories","value":[5070],"privacy":"normal"},{"order":5,"name":"syncAnimeStandardFormatSearch","value":false,"privacy":"normal"}],"id":2}
 DRY-RUN: POST prowlarr /api/v1/applications {"syncLevel":"fullSync","name":"Sonarr Anime","implementationName":"Sonarr","implementation":"Sonarr","configContract":"SonarrSettings","tags":[],"fields":[{"order":0,"name":"prowlarrUrl","value":"http://prowlarr:9696","privacy":"normal"},{"order":1,"name":"baseUrl","value":"http://sonarr-anime:8989","privacy":"normal"},{"order":2,"name":"apiKey","privacy":"apiKey","value":"***"},{"order":3,"name":"syncCategories","value":[],"privacy":"normal"},{"order":4,"name":"animeSyncCategories","value":[5070],"privacy":"normal"},{"order":5,"name":"syncAnimeStandardFormatSearch","value":false,"privacy":"normal"}]}
 DRY-RUN: POST prowlarr /api/v1/applications {"syncLevel":"fullSync","name":"Sonarr 4K","implementationName":"Sonarr","implementation":"Sonarr","configContract":"SonarrSettings","tags":[],"fields":[{"order":0,"name":"prowlarrUrl","value":"http://prowlarr:9696","privacy":"normal"},{"order":1,"name":"baseUrl","value":"http://sonarr-4k:8989","privacy":"normal"},{"order":2,"name":"apiKey","privacy":"apiKey","value":"***"},{"order":3,"name":"syncCategories","value":[5000,5010,5020,5030,5040,5045,5050,5090],"privacy":"normal"},{"order":4,"name":"animeSyncCategories","value":[5070],"privacy":"normal"},{"order":5,"name":"syncAnimeStandardFormatSearch","value":false,"privacy":"normal"}]}
@@ -418,6 +451,9 @@ Check that:
 - every *arr gets its root folders and exactly one `SABnzbd` client with
   `host` `sabnzbd`, port `8080` and its own category (`tv`, `anime`,
   `tv-4k`, `movies`, `movies-4k`, `music`);
+- Prowlarr's `SABnzbd` client has an empty `category` (`"value":""`).
+  Prowlarr's default, `prowlarr`, is not a SABnzbd category, and saving
+  the client would fail on it;
 - every non-SABnzbd client (qBittorrent, NZBGet) and every torrent
   indexer is deleted;
 - Prowlarr gets the six apps with `"syncLevel":"fullSync"`, and the old
@@ -536,28 +572,45 @@ non-4K episodes are never moved; you decide on each one.
    scripts/vm/30-split-4k.sh --apply
    ```
 
+   For each row it moves the folder, adds the title to the 4K instance
+   and rescans it there, then unmonitors and tags it in HD (the `PUT`
+   line) and rescans it in HD, so HD drops the moved files right away.
+   Each rescan must finish within `WAIT_TIMEOUT` seconds (default 600;
+   `WAIT_TIMEOUT=1800 scripts/vm/30-split-4k.sh --apply` for a large
+   series).
+
    Example (from the CI fixtures, `--apply` against the stub apps and a
    temp tree):
    ```
-   [INFO] plan: 3 move, 1 skip-mixed, 1 check, anime-4k=1 -> <tmp>/api-appdata/.migration/split-4k-20260928-164900.tsv
+   [INFO] plan: 3 move, 1 skip-mixed, 1 check, anime-4k=1 -> <tmp>/api-appdata/.migration/split-4k-20260928-184200.tsv
    [INFO] check: movie radarr 15 Scope Movie
    [INFO] skip-mixed: series sonarr 2 Mixed Show
    [INFO] POST radarr-4k /api/v3/command {"name":"RescanMovie"}; waiting
    [INFO] PUT radarr /api/v3/movie/11
+   [INFO] POST radarr /api/v3/command {"name":"RescanMovie"}; waiting
    [INFO] moved 1/3: movie 'Big 4K Movie' -> radarr-4k id 31
    [INFO] POST radarr-4k /api/v3/command {"name":"RescanMovie"}; waiting
    [INFO] PUT radarr /api/v3/movie/13
+   [INFO] POST radarr /api/v3/command {"name":"RescanMovie"}; waiting
    [INFO] moved 2/3: movie 'Unmonitored 4K Movie' -> radarr-4k id 32
    [INFO] POST sonarr-4k /api/v3/command {"name":"RescanSeries"}; waiting
    [INFO] PUT sonarr /api/v3/series/1
+   [INFO] POST sonarr /api/v3/command {"name":"RescanSeries"}; waiting
    [INFO] moved 3/3: series 'UHD Show' -> sonarr-4k id 41
-   [INFO] split: 3 titles moved; manifest <tmp>/api-appdata/.migration/split-4k-20260928-164900.manifest.tsv (undo: scripts/vm/30-split-4k.sh --undo <tmp>/api-appdata/.migration/split-4k-20260928-164900.manifest.tsv --apply)
+   [INFO] split: 3 titles moved; manifest <tmp>/api-appdata/.migration/split-4k-20260928-184200.manifest.tsv (undo: scripts/vm/30-split-4k.sh --undo <tmp>/api-appdata/.migration/split-4k-20260928-184200.manifest.tsv --apply)
    ```
 
-   Keep the manifest path from the last line: `--undo` uses it. If a row
-   fails halfway, the script stops with
+   Keep the manifest path from the last line: `--undo` uses it. The
+   manifest is the plan's rows plus two columns: `new_id` (the title's id
+   in the 4K instance) and `prior` (its monitored state in HD before the
+   split, seasons included). `--undo` restores exactly that state.
+
+   If a row fails halfway, the script stops with
    `[ERROR] row <n> partially applied; run --undo <manifest>`; see
-   Rollback.
+   Rollback. If a rescan times out, the message says `re-running is
+   safe; raise WAIT_TIMEOUT (seconds) for large libraries`. For the split,
+   the row is then partially applied: run the `--undo` first, then the
+   split again with a larger `WAIT_TIMEOUT`.
 
 ## 6. Plex
 
@@ -601,27 +654,22 @@ the trash is what would lose watch state.
    scripts/vm/verify-media.sh
    ```
    `plex-sections`, `plex-watched` and `plex-counts` must PASS. At this
-   point `plex-hw` SKIPs (nothing is transcoding yet), and
-   `seerr-servers` FAILs until step 7; that is expected here.
+   point two other results are expected and don't block this gate:
+   - `plex-hw` SKIPs: nothing is transcoding yet.
+   - `seerr-servers` FAILs: Seerr is set up in step 7. So the `RESULT`
+     line shows `1 fail` here.
 
-   Example (from the CI fixtures, with no transcode session):
+   On `media-01`, `image-versions` reads
+   `OK: 11 images at or above minimum` (the CI fixtures run fewer
+   images).
+
+   Example (from the CI fixtures, with no transcode session; only the
+   lines this gate checks):
    ```
-   PASS compose-healthy 11 services running (healthy)
-   PASS image-versions OK: 8 images at or above minimum
-   PASS arr-rootfolders 6 instances match the wiring table; 0 items under old roots
-   PASS library-adopted sonarr 19+6>=25; sonarr-anime 12+0>=12; radarr 2+1>=3 (current+moved vs baseline)
-   PASS no-regrab 0 re-grabs of baseline or split items since 2026-09-28T00:00:00Z; other=0
-   PASS sab-categories 7 categories, dirs = names, /data/usenet/{incomplete,complete}
-   PASS download-clients 6 *arr + prowlarr: one SABnzbd client each (sabnzbd:8080, own category); 0 torrent indexers
-   PASS prowlarr-sync 6 apps fullSync; 1 usenet indexers, 0 torrent, 0 proxies; each *arr has synced (Prowlarr) indexers
-   PASS 4k-split no monitored HD item has a >=2160p file; mixed=1 (split-4k-20260928-120000.tsv)
    PASS plex-sections 6 sections at /data/media/*; autoEmptyTrash=0
    PASS plex-watched watched movies+episodes=5 >= baseline 5
    PASS plex-counts Movies plex=2 radarr=2 (+0); TV Shows plex=3 sonarr=3 (+0); Anime TV plex=1 sonarr-anime=1 (+0); Movies 4K plex=1 radarr-4k=1 (+0); TV 4K plex=1 sonarr-4k=1 (+0)
    SKIP plex-hw no transcode session; play a title with a forced transcode (lower the quality in the player) and re-run
-   PASS seerr-servers Radarr, Radarr 4K, Sonarr, Sonarr 4K, Sonarr Anime by hostname; plex:32400 with 5 libraries
-   SKIP jellyfin not running (optional: docker compose --profile jellyfin up -d jellyfin)
-   RESULT: 13 pass, 0 fail, 2 skip
    ```
 
    If `plex-watched` or `plex-counts` FAILs, **do not empty the trash**;
@@ -788,6 +836,9 @@ SKIP jellyfin not running (optional: docker compose --profile jellyfin up -d jel
 RESULT: 14 pass, 0 fail, 1 skip
 ```
 
+On `media-01`, `image-versions` reads `OK: 11 images at or above
+minimum`; the fixtures run fewer images.
+
 The phase is accepted when the `RESULT` line shows `0 fail`, with
 `plex-hw`, `plex-watched` and `plex-counts` PASS (`jellyfin` may SKIP),
 and you have three `PASS import` lines. Paste them below.
@@ -825,31 +876,44 @@ Use the smallest rollback that covers the problem. From the smallest:
 
 | Undo | Run | What it undoes | Prefer it when |
 |---|---|---|---|
-| The 4K split | `scripts/vm/30-split-4k.sh --undo /opt/appdata/.migration/split-4k-<ts>.manifest.tsv`, then again with `--apply` | In reverse order: moves each title back, deletes it from the 4K instance (`deleteFiles=false`, the files stay), re-monitors it in HD without the `4k-only` tag, rescans it; renames the manifest to `.undone` | A split row failed halfway, or you want the 4K titles back in HD. Your manual moves for mixed titles are not included |
-| The file tree since step 5 | **On the Proxmox host**, with the stack stopped on the VM (`docker compose stop`): `zfs rollback tank/data@pre-4k-split` | Every file change on `tank/data` since the snapshot, including new downloads and imports | `--undo` can't run (for example its preflight fails because files were changed by hand). The apps' databases still describe the split afterwards, so combine it with `--undo` fixes by hand or with the VM rollback below |
-| The config restore | `sudo scripts/vm/10-restore-appdata.sh --rollback <ts>`, then again with `--apply` (services stopped) | Moves the pre-restore dirs from `.rollback/<ts>` back into `/opt/appdata`; the restored ones go to `.rollback/<ts>-undone` | The restored configs are wrong and you want to push them again (the host archive stays the source of truth) |
-| The whole phase on the VM | **On the Proxmox host:** `qm rollback 200 pre-phase2` | The VM disk: appdata (every app database change from steps 2–10), `.env` and the containers | Anything else, including the remap and the wiring, which have no script undo. `/data` is not on the VM disk: if the split ran, also run `zfs rollback tank/data@pre-4k-split` |
+| The 4K split | `scripts/vm/30-split-4k.sh --undo /opt/appdata/.migration/split-4k-<ts>.manifest.tsv`, then again with `--apply` | In reverse order: moves each title back, deletes it from the 4K instance (`deleteFiles=false`, the files stay), restores its HD monitored state from the manifest's `prior` column (seasons included), removes the `4k-only` tag, rescans it; renames the manifest to `.undone` | A split row failed halfway, or you want the 4K titles back in HD. Your manual moves for mixed titles are not included |
+| The file tree since step 5 | **On the Proxmox host:** `qm shutdown 200 && zfs rollback tank/data@pre-4k-split && qm start 200` | Every file change on `tank/data` since the snapshot, including new downloads and imports | `--undo` can't run (for example its preflight fails because files were changed by hand). The apps' databases still describe the split afterwards, so combine it with `--undo` fixes by hand or with the VM rollback below |
+| The config restore | `sudo scripts/vm/10-restore-appdata.sh --rollback <ts>`, then again with `--apply` (services stopped) | Every service dir the restore installed (listed in `.rollback/<ts>/installed`) moves to `.rollback/<ts>-undone/<svc>`; then each pre-restore dir saved in `.rollback/<ts>` moves back into `/opt/appdata`. A service with no saved dir (a first restore) is simply absent afterwards. The old SAB queue goes back into the undone config, `.rollback/<ts>-undone/sabnzbd/admin`, never into a live dir | The restored configs are wrong and you want to push them again (the host archive stays the source of truth), or a restore failed after the swap (Troubleshooting) |
+| The whole phase on the VM | **On the Proxmox host:** `qm rollback 200 pre-phase2 && qm start 200`. If the split ran: `qm rollback 200 pre-phase2 && zfs rollback tank/data@pre-4k-split && qm start 200` | The VM disk: appdata (every app database change from steps 2–10), `.env` and the containers. `/data` is not on the VM disk, hence the `zfs rollback` after a split, run while the VM is still stopped | Anything else, including the remap and the wiring, which have no script undo |
 
-`--undo` is a dry-run without `--apply`:
+After the VM rollback, check the VM is back at the end of runbook 02.
+**Inside the VM:**
+
+```bash
+cd /opt/home-media-server
+scripts/vm/verify.sh
+```
+
+It must print `RESULT: 10 pass, 0 fail, 0 skip`, as at the start of
+this runbook.
+
+`--undo` is a dry-run without `--apply`. An older manifest, written
+before the `prior` column existed, prints a warning and re-monitors every
+HD item and season instead:
 
 Example (from the CI fixtures):
 ```
 [INFO] undo 1/3: series sonarr 1 UHD Show
 DRY-RUN: mv -T -- '<tmp>/vmdata/media/tv-4k/UHD Show' '<tmp>/vmdata/media/tv/UHD Show'
 DRY-RUN: DELETE sonarr-4k /api/v3/series/41?deleteFiles=false
-DRY-RUN: PUT sonarr /api/v3/series/1 {"id":1,"title":"UHD Show","tvdbId":2001,"path":"/data/media/tv/UHD Show","monitored":true,"tags":[],"qualityProfileId":1,"seasons":[{"seasonNumber":1,"monitored":true},{"seasonNumber":2,"monitored":true}],"statistics":{"episodeFileCount":2}}
+DRY-RUN: PUT sonarr /api/v3/series/1 {"id":1,"title":"UHD Show","tvdbId":2001,"path":"/data/media/tv/UHD Show","monitored":true,"tags":[],"qualityProfileId":1,"seasonFolder":true,"seriesType":"standard","seasons":[{"seasonNumber":0,"monitored":false},{"seasonNumber":1,"monitored":true},{"seasonNumber":2,"monitored":true}],"statistics":{"episodeFileCount":2}}
 DRY-RUN: POST sonarr /api/v3/command {"name":"RescanSeries","seriesId":1}
 [INFO] undo 2/3: movie radarr 13 Unmonitored 4K Movie
 DRY-RUN: mv -T -- '<tmp>/vmdata/media/movies-4k/Unmonitored 4K Movie (2017)' '<tmp>/vmdata/media/movies/Unmonitored 4K Movie (2017)'
 DRY-RUN: DELETE radarr-4k /api/v3/movie/32?deleteFiles=false
-DRY-RUN: PUT radarr /api/v3/movie/13 {"id":13,"title":"Unmonitored 4K Movie","year":2017,"tmdbId":1013,"path":"/data/media/movies/Unmonitored 4K Movie (2017)","hasFile":true,"monitored":true,"tags":[],"qualityProfileId":1}
+DRY-RUN: PUT radarr /api/v3/movie/13 {"id":13,"title":"Unmonitored 4K Movie","year":2017,"tmdbId":1013,"path":"/data/media/movies/Unmonitored 4K Movie (2017)","hasFile":true,"monitored":false,"tags":[],"qualityProfileId":1}
 DRY-RUN: POST radarr /api/v3/command {"name":"RescanMovie","movieId":13}
 [INFO] undo 3/3: movie radarr 11 Big 4K Movie
 DRY-RUN: mv -T -- '<tmp>/vmdata/media/movies-4k/Big 4K Movie (2019)' '<tmp>/vmdata/media/movies/Big 4K Movie (2019)'
 DRY-RUN: DELETE radarr-4k /api/v3/movie/31?deleteFiles=false
 DRY-RUN: PUT radarr /api/v3/movie/11 {"id":11,"title":"Big 4K Movie","year":2019,"tmdbId":1011,"path":"/data/media/movies/Big 4K Movie (2019)","hasFile":true,"monitored":true,"tags":[],"qualityProfileId":1}
 DRY-RUN: POST radarr /api/v3/command {"name":"RescanMovie","movieId":11}
-DRY-RUN: mv -T -- <tmp>/api-appdata/.migration/split-4k-20260928-164900.manifest.tsv <tmp>/api-appdata/.migration/split-4k-20260928-164900.manifest.tsv.undone
+DRY-RUN: mv -T -- <tmp>/api-appdata/.migration/split-4k-20260928-184200.manifest.tsv <tmp>/api-appdata/.migration/split-4k-20260928-184200.manifest.tsv.undone
 [INFO] undo of 3 rows (dry-run; pass --apply to make it)
 ```
 
@@ -889,6 +953,37 @@ Example (from the CI fixtures):
 ```
 
 Run `docker compose stop sabnzbd prowlarr` and the remap again.
+
+**Remap: folder missing** (`folder missing on the new pool; nothing
+changed: <paths>`). An *arr app lists a title whose folder isn't under
+its new root on the pool. Its rescan would drop the title's files while
+it stays monitored, so the remap stops before any change. For each path
+listed:
+- If the folder is there under a slightly different name, rename it on
+  the pool to the name shown.
+- If it is missing, restore it from the originals on the Proxmox host.
+
+Then run the remap dry-run again; it must not list any missing folder.
+
+**Remap or split: `command <id> still queued in <svc>; re-running is
+safe; raise WAIT_TIMEOUT`.** The app's rescan took longer than
+`WAIT_TIMEOUT` seconds (default 600). For the remap, re-run it with a
+larger value, for example
+`WAIT_TIMEOUT=1800 scripts/vm/20-arr-remap.sh --apply`. For the split,
+the row is partially applied: run the `--undo` it names, then the split
+again with a larger `WAIT_TIMEOUT` (step 5, item 5).
+
+**Restore failed after the swap** (`restore <ts> failed after the swap
+started (exit <n>); steps not completed: <steps>`). The stage is already
+(partly) empty, so a re-run can't resume it. The `[ERROR]` lines that
+follow name the two ways back: `recover: sudo
+scripts/vm/10-restore-appdata.sh --rollback <ts> --apply`, or, on the
+host, `qm rollback 200 pre-phase2`.
+
+Prefer the `--rollback` (Rollback, "The config restore"); run its
+dry-run first. Use `qm rollback 200 pre-phase2 && qm start 200` if the
+`--rollback` refuses. Then push again from the host (step 2) and restore
+the new stage.
 
 **`plex-watched` or `plex-counts` FAILs.** **Do not empty the trash**: the
 items that lost their match are still there, with their watch state. The
