@@ -5,7 +5,7 @@
     "year": 2020,
     "titleSlug": "uhd-show",
     "folder": "UHD Show",
-    "seasonFolder": true,
+    "seasonFolder": false,
     "monitored": false,
     "seasons": [
       {

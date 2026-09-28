@@ -7,7 +7,13 @@
     "monitored": true,
     "tags": [],
     "qualityProfileId": 1,
+    "seasonFolder": true,
+    "seriesType": "standard",
     "seasons": [
+      {
+        "seasonNumber": 0,
+        "monitored": false
+      },
       {
         "seasonNumber": 1,
         "monitored": true

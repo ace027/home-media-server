@@ -253,21 +253,25 @@ done
 [[ -f "$DATA_ROOT/media/tv-4k/UHD Show/Season 01/e01.mkv" && ! -e "$DATA_ROOT/media/tv/UHD Show" ]] || fail split-apply "UHD Show not moved"
 [[ -d "$DATA_ROOT/media/tv/Mixed Show" && -d "$DATA_ROOT/media/movies/Scope Movie (2015)" ]] \
   || fail split-apply "the mixed series or the check movie was moved"
-# Per row, in order: lookup GET, POST to the 4K instance, command POST, PUT to HD.
+# Per row, in order: lookup GET, POST to the 4K instance, 4K rescan, PUT to
+# HD, HD rescan.
 seq_of() { grep -E "$1" "$STUB_LOG" | sed 's/ body=.*//'; }
-got="$(seq_of '^(GET (radarr|sonarr)-4k /api/v3/(movie|series)/lookup|POST (radarr|sonarr)-4k /api/v3/(movie|series|command)|PUT (radarr|sonarr) )')"
+got="$(seq_of '^(GET (radarr|sonarr)-4k /api/v3/(movie|series)/lookup|POST (radarr|sonarr)(-4k)? /api/v3/(movie|series|command)|PUT (radarr|sonarr) )')"
 want="GET radarr-4k /api/v3/movie/lookup/tmdb?tmdbId=1011
 POST radarr-4k /api/v3/movie
 POST radarr-4k /api/v3/command
 PUT radarr /api/v3/movie/11
+POST radarr /api/v3/command
 GET radarr-4k /api/v3/movie/lookup/tmdb?tmdbId=1013
 POST radarr-4k /api/v3/movie
 POST radarr-4k /api/v3/command
 PUT radarr /api/v3/movie/13
+POST radarr /api/v3/command
 GET sonarr-4k /api/v3/series/lookup?term=tvdb%3A2001
 POST sonarr-4k /api/v3/series
 POST sonarr-4k /api/v3/command
-PUT sonarr /api/v3/series/1"
+PUT sonarr /api/v3/series/1
+POST sonarr /api/v3/command"
 [[ "$got" == "$want" ]] || fail split-apply "calls out of order:"$'\n'"$got"
 bodies "POST radarr-4k /api/v3/movie" | jq -se '
   length == 2 and all(.[]; .qualityProfileId == 4 and .rootFolderPath == "/data/media/movies-4k" and .monitored == true
@@ -277,9 +281,20 @@ bodies "POST radarr-4k /api/v3/movie" | jq -se '
 bodies "POST sonarr-4k /api/v3/series" | jq -e '.addOptions.monitor == "existing" and .addOptions.searchForMissingEpisodes == false
   and .path == "/data/media/tv-4k/UHD Show" and .tvdbId == 2001 and .qualityProfileId == 4' >/dev/null \
   || fail split-apply "sonarr-4k add payload"
+# The lookup says seasonFolder false (as for any series not in the library);
+# the add takes seasonFolder and seriesType from the HD item.
+bodies "POST sonarr-4k /api/v3/series" | jq -e '.seasonFolder == true and .seriesType == "standard"' >/dev/null \
+  || fail split-apply "sonarr-4k add payload: seasonFolder/seriesType not taken from HD"
+grep -qF '"seasonFolder":true' <<<"$(bodies "POST sonarr-4k /api/v3/series")" \
+  || fail split-apply 'series POST lacks "seasonFolder":true'
 grep -qF '"monitor":"existing"' "$STUB_LOG" || fail split-apply 'series POST lacks "monitor":"existing"'
 bodies "POST radarr-4k /api/v3/command" | jq -se 'map(.movieId) == [31, 32] and all(.[]; .name == "RescanMovie")' >/dev/null \
   || fail split-apply "radarr-4k rescans"
+# HD rescans (HD ids), so HD drops hasFile/episodeFileCount right away.
+bodies "POST radarr /api/v3/command" | jq -se 'map(.movieId) == [11, 13] and all(.[]; .name == "RescanMovie")' >/dev/null \
+  || fail split-apply "radarr HD rescans after the PUT"
+bodies "POST sonarr /api/v3/command" | jq -se 'length == 1 and .[0] == {name: "RescanSeries", seriesId: 1}' >/dev/null \
+  || fail split-apply "sonarr HD rescan after the PUT"
 bodies "PUT radarr /api/v3/movie/11" | jq -e '.monitored == false and .tags == [7] and .id == 11' >/dev/null \
   || fail split-apply "radarr HD PUT: monitored false + tag 7"
 bodies "POST sonarr /api/v3/tag" | jq -e '.label == "4k-only"' >/dev/null || fail split-apply "sonarr tag not created"
@@ -288,17 +303,28 @@ bodies "PUT sonarr /api/v3/series/1" | jq -e '.monitored == false and .tags == [
 ! grep -qE '^[A-Z]+ [a-z-]+ /api/v3/(movie|series)/(2|12|15)( |$)' "$STUB_LOG" || fail split-apply "mixed/HD/check titles touched"
 MAN="$(newest .manifest.tsv)"
 [[ -f "$MAN" ]] || fail split-apply "no manifest"
-[[ "$(tail -n +2 "$MAN" | cut -f1-3,7-9 | tr '\t' ' ')" == "movie radarr 11 1 move 31
-movie radarr 13 1 move 32
-series sonarr 1 2 move 41" ]] || fail split-apply "manifest rows:"$'\n'"$(cat "$MAN")"
+[[ "$(head -n 1 "$MAN")" == $'kind\tinstance\tid\ttitle\tsrc\tdst\tfiles\taction\tnew_id\tprior' ]] \
+  || fail split-apply "manifest header"
+# prior: the HD monitored state before the split (13 was unmonitored;
+# UHD Show's season 0 was unmonitored).
+[[ "$(tail -n +2 "$MAN" | cut -f1-3,7-10 | tr '\t' ' ')" == 'movie radarr 11 1 move 31 {"m":true}
+movie radarr 13 1 move 32 {"m":false}
+series sonarr 1 2 move 41 {"m":true,"s":{"0":false,"1":true,"2":true}}' ]] || fail split-apply "manifest rows:"$'\n'"$(cat "$MAN")"
 no_secrets split-apply "$OUT"
-ok "split --apply: moved on disk, add+rescan in 4K, unmonitor+tag in HD (per row, in order), manifest with new ids"
+ok "split --apply: moved on disk, add+rescan in 4K (HD seasonFolder), unmonitor+tag+rescan in HD (per row, in order), manifest with new ids and prior"
 
 # --- 5. undo --------------------------------------------------------------------
+# post_split_fixtures: HD as the apply left it (unmonitored, every season
+# too, tagged 4k-only).
+post_split_fixtures() {
+  printf '[{"id":5,"label":"4k-only"}]\n' > "$T/fx/sonarr/GET_api_v3_tag.json"
+  jq 'map(if .id == 1 then .monitored = false | .tags = [5] | .seasons |= map(.monitored = false) else . end)' \
+    "$FIX/split/sonarr/GET_api_v3_series.json" > "$T/fx/sonarr/GET_api_v3_series.json"
+  jq 'map(if .id == 11 or .id == 13 then .monitored = false | .tags = [7] else . end)' \
+    "$FIX/split/radarr/GET_api_v3_movie.json" > "$T/fx/radarr/GET_api_v3_movie.json"
+}
 reset_stub
-printf '[{"id":5,"label":"4k-only"}]\n' > "$T/fx/sonarr/GET_api_v3_tag.json"
-jq 'map(if .id == 1 then .monitored = false | .tags = [5] | .seasons |= map(.monitored = false) else . end)' \
-  "$FIX/split/sonarr/GET_api_v3_series.json" > "$T/fx/sonarr/GET_api_v3_series.json"
+post_split_fixtures
 run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN"
 expect split-undo-dry 0 "^DRY-RUN: DELETE sonarr-4k /api/v3/series/41\?deleteFiles=false$" \
   "^DRY-RUN: mv -T -- $MAN $MAN.undone$" 'undo of 3 rows \(dry-run'
@@ -318,16 +344,49 @@ PUT radarr /api/v3/movie/13
 DELETE radarr-4k /api/v3/movie/31?deleteFiles=false
 PUT radarr /api/v3/movie/11"
 [[ "$got" == "$want" ]] || fail split-undo "undo calls not in reverse row order:"$'\n'"$got"
-bodies "PUT sonarr /api/v3/series/1" | jq -e '.monitored == true and .tags == [] and all(.seasons[]; .monitored == true)' >/dev/null \
-  || fail split-undo "sonarr HD not re-monitored without the tag"
-bodies "PUT radarr /api/v3/movie/13" | jq -e '.monitored == true' >/dev/null || fail split-undo "radarr HD not re-monitored"
+# The monitored state from prior: season 0 and movie 13 were unmonitored
+# before the split and stay so.
+bodies "PUT sonarr /api/v3/series/1" | jq -e '.monitored == true and .tags == []
+  and (.seasons | map({(.seasonNumber | tostring): .monitored}) | add) == {"0": false, "1": true, "2": true}' >/dev/null \
+  || fail split-undo "sonarr HD: prior monitored state (season 0 false) not restored, or tag kept"
+bodies "PUT radarr /api/v3/movie/13" | jq -e '.monitored == false and .tags == []' >/dev/null \
+  || fail split-undo "radarr movie 13: prior monitored=false not restored, or tag kept"
+bodies "PUT radarr /api/v3/movie/11" | jq -e '.monitored == true and .tags == []' >/dev/null \
+  || fail split-undo "radarr movie 11 not re-monitored without the tag"
+refute split-undo '\[WARN\]'
 bodies "POST sonarr /api/v3/command" | jq -e '.name == "RescanSeries" and .seriesId == 1' >/dev/null || fail split-undo "HD not rescanned"
 [[ -f "$MAN.undone" && ! -e "$MAN" ]] || fail split-undo "manifest not renamed to .undone"
 # A second undo of the same (now renamed) manifest is refused.
 run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
 expect split-undo 1 "no manifest $MAN"
 no_secrets split-undo "$OUT"
-ok "split --undo --apply: moved back, 4K item deleted (deleteFiles=false), HD re-monitored, in reverse order"
+ok "split --undo --apply: moved back, 4K item deleted (deleteFiles=false), HD monitored state from prior, in reverse order"
+
+# --- 5a. a manifest without prior (older header): all re-monitored, [WARN] -------
+make_library
+split_fixtures
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --apply
+expect split-undo-legacy 0 '\[INFO\] split: 3 titles moved'
+MAN="$(newest .manifest.tsv)"
+# A malformed prior fails the undo preflight, with nothing moved.
+cp "$MAN" "$T/man.bak"
+sed -i '2 s/\t{[^\t]*}$/\t{"m":"yes"}/' "$MAN"
+reset_stub
+post_split_fixtures
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
+expect split-undo-legacy 1 '\[ERROR\] undo preflight: malformed row: movie' 'undo preflight failed for 1 of 3 rows; nothing moved'
+[[ -z "$(mutating)" && -d "$DATA_ROOT/media/movies-4k/Big 4K Movie (2019)" ]] || fail split-undo-legacy "changes despite a malformed prior"
+# The older format: the same rows without the prior column.
+cut -f1-9 "$T/man.bak" > "$MAN"
+reset_stub
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
+expect split-undo-legacy 0 "\[WARN\] $MAN has no prior column \(older manifest\)" '\[INFO\] undone: 3 rows'
+bodies "PUT sonarr /api/v3/series/1" | jq -e '.monitored == true and .tags == [] and all(.seasons[]; .monitored == true)' >/dev/null \
+  || fail split-undo-legacy "sonarr HD not re-monitored (seasons too) without the tag"
+bodies "PUT radarr /api/v3/movie/13" | jq -e '.monitored == true and .tags == []' >/dev/null \
+  || fail split-undo-legacy "radarr HD not re-monitored"
+[[ -d "$DATA_ROOT/media/tv/UHD Show" && -f "$MAN.undone" ]] || fail split-undo-legacy "not undone"
+ok "an older manifest (no prior) re-monitors everything with a [WARN]; a malformed prior fails the undo preflight"
 
 # --- 5b. a failure after a row's mv: reported, and --undo recovers it -----------
 make_library
@@ -337,7 +396,8 @@ run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --apply
 MAN="$(newest .manifest.tsv)"
 expect split-partial 1 'GET sonarr-4k /api/v3/series/lookup\?term=tvdb%3A2001 -> HTTP 500' \
   "\[ERROR\] row 3 partially applied; run --undo $MAN$"
-[[ "$(tail -n 1 "$MAN" | cut -f2,3,9)" == $'sonarr\t1\t-' ]] || fail split-partial "partial row not in the manifest with new_id -"
+[[ "$(tail -n 1 "$MAN" | cut -f2,3,9,10)" == $'sonarr\t1\t-\t{"m":true,"s":{"0":false,"1":true,"2":true}}' ]] \
+  || fail split-partial "partial row not in the manifest with new_id - and its prior"
 ! grep -q '^PUT sonarr ' "$STUB_LOG" || fail split-partial "HD series changed after a failed add"
 reset_stub
 run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
@@ -408,6 +468,29 @@ result verify-good PASS plex-watched 'watched movies\+episodes=5 >= baseline 5'
 no_secrets verify-good "$OUT"
 no_secrets verify-good "$(cat "$T/bin/calls.log")"
 ok "verify all good: 14 PASS (plex-hw included), jellyfin SKIP, spec order, read-only, exit 0"
+
+# Manifests are read by header name: an older one (no prior) and one with
+# the columns in another order count the same.
+VMAN="$APPDATA_ROOT/.migration/split-4k-20260928-120000.manifest.tsv"
+for form in legacy reordered; do
+  if [[ $form == legacy ]]; then
+    cut -f1-9 "$FIX/verify/migration/${VMAN##*/}" > "$VMAN"
+  else
+    awk -F'\t' -v OFS='\t' '{ print $10, $9, $1, $2, $3, $4, $5, $6, $8, $7 }' "$FIX/verify/migration/${VMAN##*/}" > "$VMAN"
+  fi
+  reset_stub
+  run_verify
+  expect "verify-manifest-$form" 0 '^RESULT: 14 pass, 0 fail, 1 skip$'
+  result "verify-manifest-$form" PASS library-adopted 'sonarr 19\+6>=25; sonarr-anime 12\+0>=12; radarr 2\+1>=3'
+done
+# (the reordered manifest's new_id still protects the 4K series from a re-grab)
+printf '[{"id":900,"eventType":"grabbed","date":"2026-09-28T10:00:00Z","sourceTitle":"X","seriesId":1}]\n' \
+  > "$T/fx/sonarr-4k/$SINCE.json"
+reset_stub
+run_verify
+result verify-manifest-reordered FAIL no-regrab 're-grabbed: sonarr-4k seriesId=1 '
+verify_fixtures  # the good set again for the next case
+ok "verify reads manifests by header name: an older manifest (no prior) and reordered columns count the same"
 
 # --- 8. unhealthy service -------------------------------------------------------
 reset_stub

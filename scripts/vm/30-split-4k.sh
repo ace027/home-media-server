@@ -20,6 +20,12 @@ declare -A UHD_ROOT=([radarr]=/data/media/movies-4k [sonarr]=/data/media/tv-4k)
 ANIME_MOVIES=/data/media/anime-movies
 TAG=4k-only
 HEADER=$'kind\tinstance\tid\ttitle\tsrc\tdst\tfiles\taction'
+# The manifest adds the id created in the 4K instance and the HD item's
+# monitored state before the split (compact JSON, e.g.
+# {"m":true,"s":{"0":false,"1":true}}; "s" only for series). Manifests
+# written before "prior" existed end at new_id.
+MANIFEST_HEADER="$HEADER"$'\tnew_id\tprior'
+LEGACY_MANIFEST_HEADER="$HEADER"$'\tnew_id'
 MIGRATION="$APPDATA_ROOT/.migration"
 
 usage() {
@@ -42,12 +48,16 @@ with the columns: ${HEADER//$'\t'/ }
 Apply (--apply): preflights every move row first (dst absent, src present
 under the HD root); any failure exits 1 with nothing moved. Then per row:
 mv src dst; add it to the 4K instance from its lookup (the 4K profile,
-path dst, monitored, no search; series monitor "existing"); rescan it;
-unmonitor it (and every season) in HD and tag it $TAG. Each row goes to
-split-4k-<ts>.manifest.tsv with the id created in the 4K instance.
+path dst, monitored, no search; series monitor "existing"; series keep
+the HD seasonFolder and seriesType); rescan it; unmonitor it (and every
+season) in HD, tag it $TAG and rescan it in HD. Each row goes to
+split-4k-<ts>.manifest.tsv with the id created in the 4K instance and the
+HD monitored state before the split (column prior).
 Undo (--undo <manifest>): in reverse row order, mv dst src, DELETE the 4K
-item (deleteFiles=false), re-monitor the HD item (seasons too) without the
-tag and rescan it; then the manifest is renamed to <manifest>.undone.
+item (deleteFiles=false), restore the HD item's monitored state (seasons
+too) from prior, remove the tag and rescan it; then the manifest is
+renamed to <manifest>.undone. A manifest without prior (older header)
+re-monitors the item and every season, with a warning.
 
 Dry-run by default: writes the plan, runs the preflight and prints each
 move as "DRY-RUN: mv ...". Pass --apply to make the changes (also for
@@ -158,6 +168,33 @@ tag_id() {
   jq -r --arg t "$TAG" '[.[]? | objects | select(.label == $t) | .id][0] // empty' "$1"
 }
 
+# rescan <svc> <movie|series> <id>: RescanMovie/RescanSeries for one item,
+# then wait for it (arr_command).
+rescan() {
+  if [[ "$2" == movie ]]; then
+    jq -n --argjson id "$3" '{name: "RescanMovie", movieId: $id}' >"$W/cmd.json"
+  else
+    jq -n --argjson id "$3" '{name: "RescanSeries", seriesId: $id}' >"$W/cmd.json"
+  fi
+  arr_command "$1" "$W/cmd.json"
+}
+
+# prior_of <item-file>: the item's monitored state as compact JSON,
+# {"m":<bool>} plus "s":{"<seasonNumber>":<bool>,...} for series.
+prior_of() {
+  jq -c '{m: (.monitored != false)}
+         + (if has("seasons")
+            then {s: ([.seasons[]? | objects | {key: (.seasonNumber | tostring), value: (.monitored != false)}]
+                      | from_entries)}
+            else {} end)' "$1"
+}
+
+# prior_ok <json>: true if it is a prior value as prior_of writes it.
+prior_ok() {
+  jq -e 'type == "object" and (.m | type) == "boolean"
+         and ((.s // {}) | type == "object" and all(.[]; type == "boolean"))' <<<"$1" >/dev/null 2>&1
+}
+
 # item_fields <item-file>: two lines, the title (tabs/newlines as spaces)
 # and the path; "BAD" if the path holds a tab or newline.
 item_fields() {
@@ -170,7 +207,14 @@ item_fields() {
 # Undo
 # ==============================================================================
 if [[ -n "$UNDO" ]]; then
-  [[ "$(head -n 1 "$UNDO")" == "$HEADER"$'\tnew_id' ]] || die "$UNDO is not a split-4k manifest (header differs)"
+  UNDO_HEAD="$(head -n 1 "$UNDO")"
+  LEGACY=0
+  if [[ "$UNDO_HEAD" == "$LEGACY_MANIFEST_HEADER" ]]; then
+    LEGACY=1
+    log_warn "$UNDO has no prior column (older manifest): every HD item and season is re-monitored"
+  elif [[ "$UNDO_HEAD" != "$MANIFEST_HEADER" ]]; then
+    die "$UNDO is not a split-4k manifest (header differs)"
+  fi
   require_healthy radarr radarr-4k sonarr sonarr-4k
 
   # Rows, newest first, validated before anything is touched.
@@ -178,10 +222,10 @@ if [[ -n "$UNDO" ]]; then
   bad=()
   n=${#ROWS[@]}
   for row in "${ROWS[@]}"; do
-    IFS=$'\t' read -r kind inst id title src dst _ action new_id <<<"$row"
+    IFS=$'\t' read -r kind inst id title src dst _ action new_id prior <<<"$row"
     if [[ "${KIND[$inst]:-}" != "$kind" || ! "$id" =~ ^[0-9]+$ || "$action" != move
           || ! "$new_id" =~ ^([0-9]+|-)$ || "$src" != "${HD_ROOT[$inst]}/"* || "$dst" != "${UHD_ROOT[$inst]}/"*
-          || "$src$dst" == *"/../"* ]]; then
+          || "$src$dst" == *"/../"* ]] || { [[ $LEGACY -eq 0 ]] && ! prior_ok "$prior"; }; then
       bad+=("malformed row: $row")
     elif ! exists "$(on_disk "$dst")"; then
       bad+=("$kind $inst $id $title: $dst is missing")
@@ -203,7 +247,8 @@ if [[ -n "$UNDO" ]]; then
 
   k=0
   for row in "${ROWS[@]}"; do
-    IFS=$'\t' read -r kind inst id title src dst _ action new_id <<<"$row"
+    IFS=$'\t' read -r kind inst id title src dst _ action new_id prior <<<"$row"
+    [[ $LEGACY -eq 0 ]] || prior=null
     k=$((k + 1))
     log_info "undo $k/$n: $kind $inst $id $title"
     run mv -T -- "$(on_disk "$dst")" "$(on_disk "$src")"
@@ -212,17 +257,22 @@ if [[ -n "$UNDO" ]]; then
     fi
     jq --argjson id "$id" '.[]? | objects | select(.id == $id)' "$W/$inst-items.json" >"$W/item.json"
     [[ -s "$W/item.json" ]] || die "$inst: $kind $id not found"
-    jq --argjson t "${UNDO_TAG[$inst]:-null}" '
-      .monitored = true
-      | .tags = [(.tags // [])[] | select(. != $t)]
-      | if has("seasons") then .seasons |= map(.monitored = true) else . end' "$W/item.json" >"$W/put.json"
+    # The monitored state from prior; a season that prior does not list
+    # (added since the split) keeps its current state. Legacy: all true.
+    jq --argjson t "${UNDO_TAG[$inst]:-null}" --argjson p "$prior" '
+      .tags = [(.tags // [])[] | select(. != $t)]
+      | if $p == null then
+          .monitored = true
+          | if has("seasons") then .seasons |= map(.monitored = true) else . end
+        else
+          .monitored = $p.m
+          | if has("seasons") then
+              .seasons |= map((.seasonNumber | tostring) as $n
+                              | if ($p.s // {} | has($n)) then .monitored = $p.s[$n] else . end)
+            else . end
+        end' "$W/item.json" >"$W/put.json"
     arr_change "$inst" PUT "/api/v3/$kind/$id" "$W/put.json"
-    if [[ "$kind" == movie ]]; then
-      jq -n --argjson id "$id" '{name: "RescanMovie", movieId: $id}' >"$W/cmd.json"
-    else
-      jq -n --argjson id "$id" '{name: "RescanSeries", seriesId: $id}' >"$W/cmd.json"
-    fi
-    arr_command "$inst" "$W/cmd.json"
+    rescan "$inst" "$kind" "$id"
   done
   # A reversed manifest no longer counts for verify-media.sh.
   run mv -T -- "$UNDO" "$UNDO.undone"
@@ -362,7 +412,7 @@ fi
 # Apply
 # ==============================================================================
 MANIFEST="$MIGRATION/split-4k-$TS.manifest.tsv"
-printf '%s\tnew_id\n' "$HEADER" >"$MANIFEST"
+printf '%s\n' "$MANIFEST_HEADER" >"$MANIFEST"
 
 # ensure_tag <svc>: TAG_ID[svc], creating the 4k-only tag if missing.
 ensure_tag() {
@@ -376,14 +426,17 @@ ensure_tag() {
 
 # apply_row <n> <row>
 apply_row() {
-  local n="$1" kind inst id title src dst uhd ext new_id lk="$W/lookup.json"
+  local n="$1" kind inst id title src dst uhd ext new_id prior lk="$W/lookup.json"
   IFS=$'\t' read -r kind inst id title src dst _ _ <<<"$2"
   uhd="$inst-4k"
   local item="$W/$inst-item-$id.json"
+  # The HD monitored state from the plan's GET, before anything changes it.
+  prior="$(prior_of "$item")"
+  prior_ok "$prior" || die "$inst: $kind $id: cannot record its monitored state"
 
   run mv -T -- "$(on_disk "$src")" "$(on_disk "$dst")"
   PARTIAL="$n"
-  printf '%s\t-\n' "$2" >>"$MANIFEST"
+  printf '%s\t-\t%s\n' "$2" "$prior" >>"$MANIFEST"
 
   # Add payload from the 4K instance's own lookup.
   if [[ "$kind" == movie ]]; then
@@ -403,23 +456,27 @@ apply_row() {
   if [[ "$new_id" =~ ^[1-9][0-9]*$ ]]; then
     log_info "$uhd already has $kind '$title' (id $new_id); not adding it again"
   else
-    jq --argjson qp "${QP_ID[$inst]}" --arg root "${UHD_ROOT[$inst]}" --arg path "$dst" --arg kind "$kind" '
+    # Series keep the HD seasonFolder and seriesType: a lookup of a series
+    # not yet in the library returns seasonFolder false.
+    jq --argjson qp "${QP_ID[$inst]}" --arg root "${UHD_ROOT[$inst]}" --arg path "$dst" --arg kind "$kind" \
+      --slurpfile hd "$item" '
       del(.id) | .qualityProfileId = $qp | .rootFolderPath = $root | .path = $path
       | .monitored = true | .tags = []
+      | if $kind == "series" then
+          .seasonFolder = (if ($hd[0].seasonFolder | type) == "boolean" then $hd[0].seasonFolder else true end)
+          | .seriesType = ($hd[0].seriesType // "standard")
+        else . end
       | .addOptions = (if $kind == "movie" then {searchForMovie: false}
                        else {searchForMissingEpisodes: false, monitor: "existing"} end)' "$lk" >"$W/add.json"
     arr_mutate "$uhd" POST "/api/v3/$kind" "$W/add.json" >"$W/added.json"
     new_id="$(jq -r '.id // empty' "$W/added.json")"
     [[ "$new_id" =~ ^[0-9]+$ ]] || die "$uhd: adding $kind '$title' returned no id"
   fi
-  sed -i "\$ s/\t-\$/\t$new_id/" "$MANIFEST"
+  # The row's new_id: rewrite the last manifest line.
+  sed -i '$ d' "$MANIFEST"
+  printf '%s\t%s\t%s\n' "$2" "$new_id" "$prior" >>"$MANIFEST"
 
-  if [[ "$kind" == movie ]]; then
-    jq -n --argjson id "$new_id" '{name: "RescanMovie", movieId: $id}' >"$W/cmd.json"
-  else
-    jq -n --argjson id "$new_id" '{name: "RescanSeries", seriesId: $id}' >"$W/cmd.json"
-  fi
-  arr_command "$uhd" "$W/cmd.json"
+  rescan "$uhd" "$kind" "$new_id"
 
   # HD: unmonitored (every season too) and tagged, so an explicit HD
   # request can still re-monitor it.
@@ -429,6 +486,9 @@ apply_row() {
     | .tags = ((.tags // []) + [$t] | unique)
     | if has("seasons") then .seasons |= map(.monitored = false) else . end' "$item" >"$W/put.json"
   arr_change "$inst" PUT "/api/v3/$kind/$id" "$W/put.json"
+  # Rescan in HD, so it drops the moved files (hasFile/episodeFileCount)
+  # now rather than at its next scheduled refresh.
+  rescan "$inst" "$kind" "$id"
   PARTIAL=""
   log_info "moved $n/${#MOVES[@]}: $kind '$title' -> $uhd id $new_id"
 }

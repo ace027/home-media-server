@@ -202,11 +202,15 @@ manifests() {
   find "$MIGRATION" -maxdepth 1 -type f -name 'split-4k-*.manifest.tsv' 2>/dev/null | sort
 }
 
-# manifest_rows: every manifest data row, tab-separated.
+# manifest_rows: per manifest data row, "<instance>\t<files>\t<new_id>",
+# found by header name (so extra columns such as prior do not matter). A
+# manifest whose header lacks one of them contributes nothing.
 manifest_rows() {
   local m
   while IFS= read -r m; do
-    tail -n +2 "$m"
+    awk -F'\t' -v OFS='\t' '
+      NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; next }
+      col["instance"] && col["files"] && col["new_id"] { print $col["instance"], $col["files"], $col["new_id"] }' "$m"
   done < <(manifests)
 }
 
@@ -375,7 +379,7 @@ check_library_adopted() {
       cur="$(jq '[.[]? | objects | .statistics.episodeFileCount // 0 | tonumber? // 0] | add // 0' \
         "$(cfile "$svc" /api/v3/series)")"
     fi
-    moved="$(manifest_rows | awk -F'\t' -v s="$svc" '$2 == s { n += $7 } END { print n + 0 }')"
+    moved="$(manifest_rows | awk -F'\t' -v s="$svc" '$1 == s { n += $2 } END { print n + 0 }')"
     want="$(jq -r --arg s "$svc" --arg k "$key" '.[$k][$s] // empty' "$BASELINE")"
     if [[ ! "$want" =~ ^[0-9]+$ ]]; then
       fail library-adopted "baseline.json has no $key.$svc"
@@ -462,7 +466,7 @@ check_no_regrab() {
         [[ "$svc" != radarr ]] || field=movieId
         ;;
       *)
-        manifest_rows | awk -F'\t' -v s="${svc%-4k}" '$2 == s && $9 ~ /^[0-9]+$/ { print $9 }' | jq -s . >"$W/ids.json"
+        manifest_rows | awk -F'\t' -v s="${svc%-4k}" '$1 == s && $3 ~ /^[0-9]+$/ { print $3 }' | jq -s . >"$W/ids.json"
         field=seriesId
         [[ "$svc" != radarr-4k ]] || field=movieId
         ;;
