@@ -20,7 +20,7 @@ Family members request a title in one place, it appears automatically at the rig
 - [ ] **R2 Host & VM:** ZFS datasets (`tank/data` with recordsize=1M, `tank/backups`), IOMMU/vfio, a Debian 13 VM (q35/OVMF) with appdata on SSD, Arc A380 passthrough (ReBAR where the platform supports it; `vainfo` OK), `/data` mounted via virtiofs, Docker Engine and the Compose plugin. Delivered as a runbook plus scripts.
 - [ ] **R3 Download:** SABnzbd with categories tv, tv-4k, movies, movies-4k, music, anime, following the TRaSH single `/data` layout.
 - [ ] **R4 Arr:** Prowlarr syncing to Sonarr, **Sonarr-Anime**, Sonarr-4K, Radarr, Radarr-4K and Lidarr. Anime series use the dedicated Sonarr-Anime instance (migrated from the old `animesonarr`), and anime movies use the `anime-movies` root folder in the main Radarr. Imports are hardlinks or atomic moves.
-- [ ] **R5 Media:** Plex (Plex Pass, QSV hardware transcoding, remote access on 32400, remote quality set to Original with an overall cap of about 400 Mbps), Jellyfin as an **optional evaluation** only (QSV, same libraries read-only, off by default behind a Compose profile, started on demand to test whether it could replace Plex), Seerr (Plex login; 4K requests go to the 4K instances and need admin approval), Tautulli.
+- [ ] **R5 Media:** Plex (Plex Pass, QSV hardware transcoding, remote access on 32400, remote quality set to Original with an overall cap of about 400 Mbps), Jellyfin as an **optional evaluation** only (QSV, same libraries read-only, off by default behind a Compose profile, started on demand to test whether it could replace Plex), Seerr (Plex login; 4K requests go to the 4K instances and need admin approval; TV requests need admin approval so anime can be routed to Sonarr-Anime), Tautulli. 4K titles live only in separate **Movies 4K** and **TV 4K** Plex libraries, shared with every family member (non-4K devices get an HDR-tone-mapped transcode).
 - [ ] **R6 Edge:** Traefik v3 with wildcard certificates via Cloudflare DNS-01, `cloudflare-ddns` for the dynamic IP (DNS-only records), Authentik (invites, admin MFA; OIDC and a public route for Jellyfin only if it is adopted after evaluation), CrowdSec bouncer, geo-block, secure headers. Only ports 443 and 32400 are forwarded.
 - [ ] **R7 Private admin:** Twingate connector in a **separate LXC**, reusing the existing Twingate network. Admin UIs live under `*.int.<domain>` behind the `lan-only` ipAllowList plus Authentik forward-auth.
 - [ ] **R8 AV1 transcode:** FileFlows server and GPU node, QSV AV1, running 01:00-07:00 with 1 runner, covering all libraries including 4K.
@@ -29,7 +29,7 @@ Family members request a title in one place, it appears automatically at the rig
 - [ ] **R9 Quality automation:** Recyclarr (TRaSH HD, 4K and anime profiles; AV1 and DV custom-format scores set to 0; DV without HDR10 fallback blocked), Bazarr (HD), Maintainerr (dry-run first).
 - [ ] **R10 Monitoring & alerts:** Homepage, Uptime Kuma, Notifiarr/Discord webhooks, Dozzle, Diun update notifications.
 - [ ] **R11 Backups:** nightly vzdump to Proxmox Backup Server (PBS), Backrest/restic of appdata off-site, sanoid snapshots of `tank/data`, ZFS scrub and SMART alerts, and a documented restore drill that has actually been run.
-- [ ] **R12 Family onboarding:** Authentik invite flow, Plex library sharing rules (4K only for users with 4K/HDR-capable devices), and a one-page family guide with recommended AV1-capable devices.
+- [ ] **R12 Family onboarding:** Authentik invite flow, Plex library sharing (every family member gets all libraries, including Movies 4K and TV 4K; non-4K devices transcode), and a one-page family guide with recommended AV1-capable devices.
 
 ### Out of Scope
 - Torrents or a VPN download container (Usenet only)
@@ -68,6 +68,9 @@ Family members request a title in one place, it appears automatically at the rig
 | Primary server | Owner's Plex Pass covers family remote streaming | Plex |
 | Jellyfin | Owner wants to evaluate it as a possible Plex replacement, not run it as a standing backup (decided 2026-09-28) | Optional evaluation: off by default (Compose profile `jellyfin`), same read-only libraries + QSV; Authentik OIDC, public route and family docs only if adopted |
 | 4K/anime | Keep family on appropriate quality; keep the existing anime instance's history | Separate 4K instances; a dedicated Sonarr-Anime instance (migrated); anime movies via a root folder in Radarr |
+| 4K titles (2026-09-28) | Limited SSD space; everyone should still be able to watch | 4K-only (no HD copies; HD instances unmonitor them); separate Plex Movies 4K / TV 4K libraries shared with everyone. An explicit HD request for a 4K-only title is allowed to download an HD copy |
+| Anime routing (2026-09-28) | Seerr can't auto-route anime to a separate Sonarr (override rules only set profile/root/tags) | TV requests need admin approval; the owner switches anime requests to Sonarr-Anime while pending. Movies stay auto-approved; 4K always needs approval |
+| Phase 2 approach (2026-09-28) | Restore live state safely, once | Pragmatic: restore old configs (not rebuild), remap paths via each app's API, scripted wiring/4K split/verification, owner UI for Plex/Seerr. Spec: `.planning/specs/02-core-media-automation-spec.md` |
 | Old stack migration | Old server ran qBittorrent+gluetun+flaresolverr, NZBGet, a separate animesonarr, and a Twingate connector | Usenet only (retire torrents and NZBGet); keep a separate anime Sonarr; Twingate connector moves to a separate LXC. See `.planning/migration/old-stack-inventory.md` |
 | AV1 | Save space; family devices support AV1 | FileFlows on all libraries including 4K; HDR10 kept, DV dropped |
 | Media pool | Owner is moving SSDs with an existing pool and library into the new server | Import (optionally renamed to `tank`); consolidate into a single `<pool>/data` dataset; `05-import-pool.sh` + runbook 01 §1a |
@@ -83,4 +86,4 @@ Family members request a title in one place, it appears automatically at the rig
 - Recovery stack: Proxmox snapshots, then PBS, then restic of appdata; git revert handles config.
 
 ---
-*Last updated: 2026-09-28 (Jellyfin made an optional evaluation; host hardware recorded)*
+*Last updated: 2026-09-28 (Jellyfin optional evaluation; host hardware; Phase 2 decisions: 4K access, anime routing, approach)*
