@@ -237,10 +237,10 @@ check gets its own row.
 
 | Check | Result | Date | Notes |
 |-------|--------|------|-------|
-| `verify.sh` RESULT line | | | |
-| hardlink on virtiofs (real VM) | | | |
-| `vaapi-av1` | | | |
-| `gpu` (kernel version) | | | |
+| `verify.sh` RESULT line | `RESULT: 10 pass, 0 fail, 0 skip` | 2026-09-28 | VM 200 `media-01` (Debian 13, 6 cores / 10 GB) on the Dell Skylake host |
+| hardlink on virtiofs (real VM) | `PASS hardlink inode 1912 shared, link count 2` | 2026-09-28 | `/data` = `media-data` virtiofs → `tank/data` |
+| `vaapi-av1` | `PASS vaapi-av1 AV1 low-power encode entrypoint found` | 2026-09-28 | A380 with a 256 MB BAR (no ReBAR on this board); HEVC Main10 and H.264 encode also PASS |
+| `gpu` (kernel version) | `PASS gpu /dev/dri/renderD128 is a character device, kernel 6.12.107+deb13-amd64` | 2026-09-28 | Docker 29.8.1 with the Compose plugin; `proxy` network and `compose.yaml` checks PASS |
 
 ## Troubleshooting
 

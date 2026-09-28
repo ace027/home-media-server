@@ -140,6 +140,9 @@ if zfs list -H -o name "$POOL/data" >/dev/null 2>&1; then
       if [[ "$FIX_OWNERSHIP" == "1" ]]; then
         run chown -R "$PUID:$PGID" "$mnt"
         run chmod -R u=rwX,g=rwX,o=rX "$mnt"
+        if [[ $APPLY -eq 1 ]]; then
+          log_info "ownership fixed: $mnt is now $PUID:$PGID (re-run without --apply to confirm 'ownership OK')"
+        fi
       else
         log_info "run: chown -R $PUID:$PGID $mnt"
         log_info "run: chmod -R u=rwX,g=rwX,o=rX $mnt"

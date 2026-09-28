@@ -206,6 +206,30 @@ cleanly shut down, or you skipped `zpool export`). It is only safe once the
 old server is definitely no longer using the pool — importing a pool that's
 still live elsewhere can corrupt it.
 
+### TRIM the migrated SSDs
+
+A pool moved from another server may never have passed TRIM down to its
+SSDs (`autotrim` defaults to `off`). The drives then treat almost all of
+their flash as live data and must garbage-collect before every write, which
+makes large writes very slow. On the owner's pool the library copy ran at
+~85 MB/s (5–15 ms write latency) before trimming and ~200 MB/s after.
+Check it after the import:
+```bash
+zpool get autotrim tank
+zpool status -t tank            # "(untrimmed)" next to each disk = never trimmed
+lsblk --discard /dev/sdX        # non-zero DISC-GRAN/DISC-MAX = the drive supports TRIM
+```
+Trim once and turn on autotrim. Do it before the big copy into `tank/data`
+if you can; if a copy is already running, stop it (rsync resumes where it
+left off), trim, then resume, since the two compete for the same drives:
+```bash
+zpool trim tank                 # background; watch with: zpool status -t tank
+zpool set autotrim=on tank
+```
+The first trim of a mostly empty pool takes from tens of minutes to a few
+hours; give the drives ~10 minutes idle afterwards. Space held by snapshots
+(e.g. `tank@pre-migration`) isn't trimmed until the snapshot is destroyed.
+
 ### Do not `zpool upgrade`
 
 `05-import-pool.sh` inventories the pool and warns about this on every run.
