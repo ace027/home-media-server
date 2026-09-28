@@ -110,6 +110,24 @@ Only two ports are forwarded on the router, straight to the VM:
 
 Ports 80 and 81 stay closed because certificates are issued via Cloudflare DNS-01, not HTTP-01. `cloudflare-ddns` keeps the public (DNS-only, not proxied) A/AAAA records for the public hostnames pointed at the current WAN IP.
 
+Plex's `32400` is the only port the stack files publish, and the only permanent one. Every other service is reached by service name on `proxy` (e.g. `http://sabnzbd:8080`).
+
+**Temporary admin ports (Phase 2 only).** Until Phase 3's Traefik exists, `compose.lan.yaml` publishes the admin UIs on the VM's LAN IP so the owner can reach them over Twingate (the connector in LXC 101 reaches LAN IPs, not Docker bridge IPs). It is enabled by uncommenting `COMPOSE_FILE=compose.yaml:compose.lan.yaml` in `.env`. Every port binds only to `${LAN_IP}`, never to `0.0.0.0`, and Compose refuses to render the override if `LAN_IP` is unset. Phase 3 deletes `compose.lan.yaml` and the `COMPOSE_FILE` line.
+
+| Service | LAN_IP host port → container port |
+|---------|-----------------------------------|
+| sabnzbd | 8080 → 8080 |
+| prowlarr | 9696 → 9696 |
+| sonarr | 8989 → 8989 |
+| sonarr-anime | 8990 → 8989 |
+| sonarr-4k | 8991 → 8989 |
+| radarr | 7878 → 7878 |
+| radarr-4k | 7879 → 7878 |
+| lidarr | 8686 → 8686 |
+| seerr | 5055 → 5055 |
+| tautulli | 8181 → 8181 |
+| jellyfin *(only with `--profile jellyfin`)* | 8096 → 8096 |
+
 ## Service template
 New services extend the shared `base` template from `stacks/_common.yaml` instead of repeating `restart`, `security_opt`, `environment` and `logging` on every service:
 

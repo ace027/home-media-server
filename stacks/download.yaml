@@ -1,6 +1,23 @@
 # Download stack — services added in Phase 2 (sabnzbd)
 # New services: extends: {file: _common.yaml, service: base} and pin image tags (never :latest).
-services: {}
+services:
+  sabnzbd:
+    extends:
+      file: _common.yaml
+      service: base
+    image: lscr.io/linuxserver/sabnzbd:5.1.1-ls268
+    volumes:
+      - ${APPDATA_ROOT}/sabnzbd:/config
+      - ${DATA_ROOT}:/data
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS \"http://localhost:8080/api?mode=version\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
 networks:
   proxy:
     name: proxy
