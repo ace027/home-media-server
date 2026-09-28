@@ -18,7 +18,7 @@
 **Success Criteria**:
 - [ ] `docker compose config` validates the `include:` tree with `.env.example` values; `secrets/` and `.env` are gitignored
 - [ ] Every image in every stack file is pinned to an explicit tag
-- [ ] The host runbook covers ZFS datasets, IOMMU/vfio, and VM creation (q35/OVMF, ReBAR) with A380 passthrough
+- [ ] The host runbook covers ZFS datasets, IOMMU/vfio, and VM creation (q35/OVMF, ReBAR where available) with A380 passthrough
 - [ ] Inside the VM, `vainfo` on `/dev/dri/renderD128` lists AV1/HEVC/H.264 encode entrypoints
 - [ ] `/data` is mounted via virtiofs, `scripts/mkdirs.sh` creates the TRaSH tree, and a hardlink test between `/data/usenet` and `/data/media` succeeds
 **Plans**: 5 (01-01..01-04 in 3 waves, plus 01-05 for the migrated SSD pool)
@@ -28,17 +28,17 @@
 **Requirements**: R3, R4, R5
 **Recommended Agents**: engineering-infrastructure-devops, engineering-backend-architect, testing-api-tester, testing-qa-verification-specialist
 **Success Criteria**:
-- [ ] SABnzbd, Prowlarr, Sonarr, Sonarr-Anime, Sonarr-4K, Radarr, Radarr-4K, Lidarr, Plex, Jellyfin, Seerr and Tautulli are all healthy (`docker compose ps`)
+- [ ] SABnzbd, Prowlarr, Sonarr, Sonarr-Anime, Sonarr-4K, Radarr, Radarr-4K, Lidarr, Plex, Seerr and Tautulli are all healthy (`docker compose ps`); Jellyfin is defined behind the `jellyfin` Compose profile and starts on demand (`docker compose --profile jellyfin up -d`)
 - [ ] Prowlarr syncs its (Usenet-only) indexers to all 6 *arr instances (checked via API); the old torrent indexers and the qBittorrent/NZBGet download clients are removed
 - [ ] A test request in Seerr (HD, 4K, anime) lands in the correct instance, root folder and SAB category, and is imported as a hardlink (same inode)
-- [ ] Plex and Jellyfin dashboards show hardware transcoding (hw) on a forced transcode
+- [ ] Plex shows hardware transcoding (hw) on a forced transcode; Jellyfin, when started for evaluation, does too
 - [ ] Old app configs from `/tank/migration/old-docker-<date>.tar.zst` (archived from the old Ubuntu VM's `/docker`; Sonarr/Radarr/Plex/SAB) are migrated onto the same or newer image versions with paths remapped to `/data/...`, keeping settings, history and Plex watch state
 - [ ] 4K titles mixed into `media/movies` and `media/tv` are identified and moved to `movies-4k`/`tv-4k` under Radarr-4K/Sonarr-4K
-- [ ] The existing library migrated from the old SSD pool is adopted by Sonarr/Radarr/Lidarr (root folders under `/data/media`) with no re-downloads, and appears in Plex and Jellyfin
+- [ ] The existing library migrated from the old SSD pool is adopted by Sonarr/Radarr/Lidarr (root folders under `/data/media`) with no re-downloads, and appears in Plex (and in Jellyfin when it is started)
 **Plans**: 3
 
 ### Phase 3: Edge & Secure Access
-**Goal**: Safe public access for Plex, Jellyfin, Seerr and Authentik, DDNS for the dynamic IP, and admin UIs reachable only through Twingate.
+**Goal**: Safe public access for Plex, Seerr and Authentik (plus Jellyfin only if it has been adopted), DDNS for the dynamic IP, and admin UIs reachable only through Twingate.
 **Requirements**: R6, R7
 **Recommended Agents**: engineering-infrastructure-devops, engineering-security-engineer, testing-qa-verification-specialist
 **Success Criteria**:
@@ -47,7 +47,8 @@
 - [ ] An external scan shows only 443 and 32400 open; `*.int.<domain>` returns 403 from off-LAN without Twingate
 - [ ] Over Twingate, every admin UI loads behind Authentik forward-auth, and admin MFA is enforced
 - [ ] CrowdSec bans a simulated brute-force IP; the geo-block rejects a non-allowed country
-- [ ] Plex remote access shows "Fully accessible"; Jellyfin OIDC login through Authentik works
+- [ ] Plex remote access shows "Fully accessible"
+- [ ] *(Only if Jellyfin is adopted after evaluation)* Jellyfin is routed through Traefik and OIDC login through Authentik works
 **Plans**: 3
 
 ### Phase 4: Quality Automation & AV1
@@ -80,7 +81,7 @@
 **Recommended Agents**: product-technical-writer, engineering-security-engineer, testing-qa-verification-specialist
 **Success Criteria**:
 - [ ] Authentik invite flow creates a family account; Plex shares match the rules (4K only for users with 4K/HDR-capable devices)
-- [ ] The one-page family guide covers installing Plex, signing in, requesting in Seerr, using Jellyfin as a fallback, and recommended AV1-capable devices
+- [ ] The one-page family guide covers installing Plex, signing in, requesting in Seerr, and recommended AV1-capable devices (Jellyfin is covered only if it has replaced Plex)
 - [ ] One family member completes request → remote watch end-to-end with no admin action (HD)
 - [ ] An exposure review confirms no admin UI is reachable publicly and all secrets are absent from git history
 **Plans**: 2

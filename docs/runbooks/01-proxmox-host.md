@@ -48,9 +48,13 @@ Before touching software, set these in the host's BIOS/UEFI setup:
 
 - **Intel VT-d** (or **AMD-Vi** on AMD platforms) — enabled. This is
   IOMMU support and is required for PCI passthrough.
-- **Above 4G Decoding** — enabled. Required for the A380's large PCI BARs.
-- **Resizable BAR (ReBAR)** — enabled. Intel Arc GPUs perform poorly, or
-  fail to initialize under passthrough, without it.
+- **Above 4G Decoding** and **Resizable BAR (ReBAR)** — enable them *if
+  the BIOS has them*. ReBAR mainly matters for Arc gaming performance; for
+  this build's media work (QSV transcoding in Plex/Jellyfin, AV1 encoding in
+  FileFlows) the A380 works with the default 256 MB BAR. Older platforms
+  (e.g. Intel Skylake / 100-series boards, like the owner's Dell) often have
+  neither option; that is fine — don't hold up the build for it. See
+  Troubleshooting for how to check what the card actually got.
 - Optionally, if the host also has an integrated GPU (iGPU) or onboard
   video, set the **primary display** to that device rather than the A380,
   so the A380 stays free for passthrough and the host console doesn't
@@ -131,7 +135,20 @@ consolidated without you naming it.
    them now (`docker start $(docker ps -aq)`) and repeat steps 2–4 right
    before step 4 below, so the archive is current. Phase 2 restores these
    configs from `/tank/migration/` and remaps their paths to `/data/...`.
-1. Stop anything using the pool (Plex, *arr apps, SMB/NFS shares, etc.).
+1. Stop anything using the pool (Plex, *arr apps, SMB/NFS shares, etc.),
+   including any **VM that mounts the pool over virtiofs** (its `virtiofsd`
+   processes hold `/tank` open, so `zpool export` fails with "pool is
+   busy"). Then stop the old Proxmox host from re-importing the pool on its
+   own: Proxmox's status daemon automatically imports any pool that backs
+   an enabled storage, seconds after you export it, and the new host then
+   reports the pool as "last accessed by another system". Disable every
+   storage on the pool first:
+   ```bash
+   pvesm status                                # find storages on the pool
+   grep -B1 -A4 -E 'pool tank|path /tank' /etc/pve/storage.cfg
+   pvesm set <storage-id> --disable 1          # for each one
+   fuser -vm /tank                             # expect only the "kernel mount" line
+   ```
 2. Confirm the pool is healthy:
    ```bash
    zpool status <pool>
@@ -145,7 +162,9 @@ consolidated without you naming it.
    ```bash
    zpool export <pool>
    ```
-   Expected output: the pool disappears from `zpool list`.
+   Expected output: the pool disappears from `zpool list`. Check again a
+   minute later: if `tank` is back, a storage on the old host is still
+   enabled (step 1), so disable it and export again.
 5. Physically move the SSDs to the new Proxmox host.
 
 ### Import (new host)
@@ -527,6 +546,44 @@ differs from the default, pass it explicitly:
 storage listing doesn't include `local-zfs`, also pass
 `VM_STORAGE=local-lvm` (or the correct storage name).
 
+### Sizing the VM for the host
+
+The script's defaults (`VM_CORES=8`, `VM_MEMORY=20480`,
+`VM_STORAGE=local-zfs`) assume a larger host with Proxmox installed on ZFS.
+Check what this host has before applying:
+```bash
+nproc; free -g; pvesm status
+```
+With the A380 passed through, the VM's RAM is **locked for as long as it
+runs** (PCI passthrough can't use ballooning or overcommit), so budget it
+against the host's physical RAM: leave about 1.5–2 GB for Proxmox itself,
+the ZFS ARC cap below, and a little headroom. Leave 1–2 CPU threads for the
+host (ZFS, `virtiofsd`).
+
+Put the values in the host's `.env` (the scripts read `.env` before applying
+their defaults), so every run uses them. The owner's host (8 threads, 16 GB
+RAM, Proxmox on ext4/LVM) uses:
+```bash
+# /root/home-media-server/.env on the Proxmox host
+VM_STORAGE=local-lvm
+VM_CORES=6
+VM_MEMORY=10240
+ISO=local:iso/debian-13.7.0-amd64-netinst.iso
+```
+10 GB is enough for the planned stack (Jellyfin only runs while being
+evaluated). After a RAM upgrade, raise it with `qm set 200 --memory <MB>`.
+
+Cap the ZFS ARC (the pool's RAM cache) so it doesn't compete with the VM's
+locked memory. On a 16 GB host, 2 GB is a good cap; raise it if the host has
+RAM to spare:
+```bash
+echo "options zfs zfs_arc_max=$((2*1024*1024*1024))" > /etc/modprobe.d/zfs.conf
+update-initramfs -u -k all
+echo $((2*1024*1024*1024)) > /sys/module/zfs/parameters/zfs_arc_max   # apply now, no reboot
+cat /sys/module/zfs/parameters/zfs_arc_max
+```
+Expected output: `2147483648`.
+
 Apply it:
 
 ```bash
@@ -666,19 +723,23 @@ qm set 200 --hostpci0 0000:03:00.0,pcie=1,x-vga=1
 `x-vga=1` tells Proxmox to treat the A380 as the VM's primary display
 adapter, which some Intel GPUs require to initialize correctly under KVM.
 
-**Resizable BAR not actually enabled**, despite the BIOS toggle. Confirm on
-the host:
+**Checking Resizable BAR.** See what BAR size the card actually got:
 ```bash
-lspci -vv -s 0000:03:00.0 | grep -i 'resizable'
+lspci -vv -s 0000:03:00.0 | grep -i -A2 'resizable bar'
+lspci -vv -s 0000:03:00.0 | grep -i 'region 2'
 ```
-Expected output:
+Output on the owner's host (no ReBAR option in the BIOS):
 ```
-		Resizable BAR: bit 0 (256MB) supported, bit 14 (256GB) enabled
+        Capabilities: [420 v1] Physical Resizable BAR
+                BAR 2: current size: 256MB, supported: 256MB 512MB 1GB 2GB 4GB 8GB
+        Region 2: Memory at d0000000 (64-bit, prefetchable) [size=256M]
 ```
-(This is what a host with ReBAR correctly enabled prints.) If nothing
-prints, or the enabled bit doesn't match a supported size, re-check the
-BIOS setting — some boards only expose ReBAR when CSM/legacy boot is fully
-disabled.
+With ReBAR active, `current size` shows a larger value (up to `8GB`) and
+Region 2 sits above 4 GB. If your BIOS has the options but the size is still
+256MB, check that Above 4G Decoding is saved as enabled and that CSM/legacy
+boot is fully off. If the BIOS has no such options, continue: ReBAR is
+optional for this build (see section 1), and `verify.sh`'s `vaapi-*` checks
+are what confirm the encoders work.
 
 **Proxmox VE older than 8.4.** `20-create-vm.sh` refuses:
 ```

@@ -20,6 +20,8 @@
 - Phase 1 spec: `.planning/specs/01-host-repo-foundation-spec.md` (critique PASS after revisions)
 - Phase 1 plan critique: REWORK, then revised (5 critical + 6 warnings fixed)
 - Phase 1 review: PASSED after 3 cycles (2 blockers, 9 warnings fixed; 14 suggestions deferred) — `.planning/phases/01-host-repo-foundation/01-REVIEW.md`
+- 2026-09-28: Jellyfin changed from standing backup to optional evaluation (off by default behind a Compose profile; OIDC/public route/family docs only if adopted). PROJECT.md R5/R6 and ROADMAP Phases 2, 3, 6 updated
+- 2026-09-28: Host hardware recorded (Skylake, 8 threads, 16 GB, no ReBAR option). VM 200 created at 6 cores / 10 GB on local-lvm; ZFS ARC capped at 2 GB. Runbook 01 now covers VM sizing, the ARC cap, optional ReBAR, and disabling pool storages before `zpool export`
 - Owner checkpoint (after build): run `scripts/vm/verify.sh` on the real VM → `RESULT: 10 pass, 0 fail, 0 skip`
 
 ## GitHub
@@ -30,4 +32,4 @@
 ## Next Action
 Run `/legion:plan 2` to plan the next phase (Core Media Automation)
 
-Owner action (outside the repo): export the SSD pool on the old server, then follow `docs/runbooks/01-proxmox-host.md` (starting at §1a) and `docs/runbooks/02-vm-bootstrap.md`, then record `scripts/vm/verify.sh` results in the Acceptance record.
+Owner hardware progress (2026-09-28): pool exported, moved and imported on the new host; `tank@pre-migration` snapshot taken; `tank/data` created and the library copy into `tank/data/media` is running; IOMMU/vfio config applied (reboot pending); VM 200 created (not yet started). Remaining: verify the copy, fix ownership, reboot, post-reboot checks, then `docs/runbooks/02-vm-bootstrap.md` and record `scripts/vm/verify.sh` in the Acceptance record.
