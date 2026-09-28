@@ -1,0 +1,90 @@
+[
+  {
+    "enable": false,
+    "protocol": "usenet",
+    "priority": 1,
+    "name": "",
+    "implementationName": "SABnzbd",
+    "implementation": "Sabnzbd",
+    "configContract": "SabnzbdSettings",
+    "tags": [],
+    "presets": [],
+    "fields": [
+      {
+        "order": 0,
+        "name": "host",
+        "value": "localhost",
+        "privacy": "normal"
+      },
+      {
+        "order": 1,
+        "name": "port",
+        "value": 8080,
+        "privacy": "normal"
+      },
+      {
+        "order": 2,
+        "name": "useSsl",
+        "value": false,
+        "privacy": "normal"
+      },
+      {
+        "order": 3,
+        "name": "urlBase",
+        "privacy": "normal"
+      },
+      {
+        "order": 4,
+        "name": "apiKey",
+        "privacy": "apiKey"
+      },
+      {
+        "order": 5,
+        "name": "username",
+        "privacy": "userName"
+      },
+      {
+        "order": 6,
+        "name": "password",
+        "privacy": "password"
+      },
+      {
+        "order": 7,
+        "name": "category",
+        "value": "prowlarr",
+        "privacy": "normal"
+      },
+      {
+        "order": 8,
+        "name": "priority",
+        "value": -100,
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "enable": false,
+    "protocol": "usenet",
+    "priority": 1,
+    "name": "",
+    "implementationName": "NZBGet",
+    "implementation": "Nzbget",
+    "configContract": "NzbgetSettings",
+    "tags": [],
+    "presets": [],
+    "fields": [
+      {
+        "order": 0,
+        "name": "host",
+        "value": "localhost",
+        "privacy": "normal"
+      },
+      {
+        "order": 1,
+        "name": "port",
+        "value": 6789,
+        "privacy": "normal"
+      }
+    ]
+  }
+]

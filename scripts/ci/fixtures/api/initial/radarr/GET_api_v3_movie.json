@@ -1,0 +1,16 @@
+[
+  {
+    "id": 21,
+    "title": "Movie A",
+    "path": "/data/movies/Movie A (2001)",
+    "hasFile": true,
+    "monitored": true
+  },
+  {
+    "id": 22,
+    "title": "Movie B",
+    "path": "/data/movies/Movie B (2002)",
+    "hasFile": true,
+    "monitored": true
+  }
+]

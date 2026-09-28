@@ -1,0 +1,9 @@
+{
+  "id": 1,
+  "autoUnmonitorPreviouslyDownloadedEpisodes": true,
+  "recycleBin": "",
+  "createEmptySeriesFolders": false,
+  "deleteEmptyFolders": false,
+  "fileDate": "none",
+  "copyUsingHardlinks": true
+}

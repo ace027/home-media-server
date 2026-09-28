@@ -1,0 +1,10 @@
+[
+  {
+    "id": 2,
+    "name": "NZBgeek (Prowlarr)",
+    "protocol": "usenet",
+    "implementation": "Newznab",
+    "enable": true,
+    "priority": 25
+  }
+]

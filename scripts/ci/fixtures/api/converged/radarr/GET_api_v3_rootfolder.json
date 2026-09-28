@@ -1,0 +1,12 @@
+[
+  {
+    "id": 7,
+    "path": "/data/media/movies/",
+    "accessible": true
+  },
+  {
+    "id": 8,
+    "path": "/data/media/anime-movies/",
+    "accessible": true
+  }
+]

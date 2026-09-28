@@ -1,0 +1,142 @@
+[
+  {
+    "enable": false,
+    "protocol": "usenet",
+    "priority": 1,
+    "removeCompletedDownloads": true,
+    "removeFailedDownloads": true,
+    "name": "",
+    "implementationName": "SABnzbd",
+    "implementation": "Sabnzbd",
+    "configContract": "SabnzbdSettings",
+    "tags": [],
+    "presets": [],
+    "fields": [
+      {
+        "order": 0,
+        "name": "host",
+        "label": "Host",
+        "value": "localhost",
+        "type": "textbox",
+        "advanced": false,
+        "privacy": "normal"
+      },
+      {
+        "order": 1,
+        "name": "port",
+        "label": "Port",
+        "value": 8080,
+        "type": "textbox",
+        "advanced": false,
+        "privacy": "normal"
+      },
+      {
+        "order": 2,
+        "name": "useSsl",
+        "label": "Use SSL",
+        "value": false,
+        "type": "checkbox",
+        "advanced": false,
+        "privacy": "normal"
+      },
+      {
+        "order": 3,
+        "name": "urlBase",
+        "label": "URL Base",
+        "type": "textbox",
+        "advanced": true,
+        "privacy": "normal"
+      },
+      {
+        "order": 4,
+        "name": "apiKey",
+        "label": "API Key",
+        "type": "textbox",
+        "advanced": false,
+        "privacy": "apiKey"
+      },
+      {
+        "order": 5,
+        "name": "username",
+        "label": "Username",
+        "type": "textbox",
+        "advanced": false,
+        "privacy": "userName"
+      },
+      {
+        "order": 6,
+        "name": "password",
+        "label": "Password",
+        "type": "password",
+        "advanced": false,
+        "privacy": "password"
+      },
+      {
+        "order": 7,
+        "name": "tvCategory",
+        "label": "Category",
+        "value": "tv",
+        "type": "textbox",
+        "advanced": false,
+        "privacy": "normal"
+      },
+      {
+        "order": 8,
+        "name": "recentTvPriority",
+        "label": "Recent Priority",
+        "value": -100,
+        "type": "select",
+        "advanced": false,
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "enable": false,
+    "protocol": "torrent",
+    "priority": 1,
+    "removeCompletedDownloads": true,
+    "removeFailedDownloads": true,
+    "name": "",
+    "implementationName": "qBittorrent",
+    "implementation": "QBittorrent",
+    "configContract": "QBittorrentSettings",
+    "tags": [],
+    "presets": [],
+    "fields": [
+      {
+        "order": 0,
+        "name": "host",
+        "value": "localhost",
+        "type": "textbox",
+        "privacy": "normal"
+      },
+      {
+        "order": 1,
+        "name": "port",
+        "value": 8080,
+        "type": "textbox",
+        "privacy": "normal"
+      },
+      {
+        "order": 2,
+        "name": "username",
+        "type": "textbox",
+        "privacy": "userName"
+      },
+      {
+        "order": 3,
+        "name": "password",
+        "type": "password",
+        "privacy": "password"
+      },
+      {
+        "order": 4,
+        "name": "tvCategory",
+        "value": "tv",
+        "type": "textbox",
+        "privacy": "normal"
+      }
+    ]
+  }
+]

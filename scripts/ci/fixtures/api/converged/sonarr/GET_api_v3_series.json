@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "title": "Show A",
+    "path": "/data/media/tv/Show A",
+    "monitored": true
+  },
+  {
+    "id": 2,
+    "title": "Show B",
+    "path": "/data/media/tv/Show B",
+    "monitored": true
+  }
+]

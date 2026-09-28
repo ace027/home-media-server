@@ -1,0 +1,14 @@
+[
+  {
+    "id": 11,
+    "title": "Anime A",
+    "path": "/data/anime/Anime A",
+    "monitored": true
+  },
+  {
+    "id": 12,
+    "title": "Anime B",
+    "path": "/data/anime/Anime B",
+    "monitored": true
+  }
+]
