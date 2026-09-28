@@ -1,0 +1,15 @@
+{
+  "MediaContainer": {
+    "size": 1,
+    "totalSize": 1,
+    "offset": 0,
+    "Metadata": [
+      {
+        "ratingKey": "301",
+        "type": "episode",
+        "title": "Anime Ep",
+        "viewCount": 3
+      }
+    ]
+  }
+}

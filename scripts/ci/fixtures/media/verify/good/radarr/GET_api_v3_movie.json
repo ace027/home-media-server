@@ -1,0 +1,31 @@
+[
+  {
+    "id": 21,
+    "title": "Movie A",
+    "tmdbId": 5021,
+    "path": "/data/media/movies/Movie A (2001)",
+    "hasFile": true,
+    "monitored": true,
+    "tags": []
+  },
+  {
+    "id": 22,
+    "title": "4K Movie",
+    "tmdbId": 5022,
+    "path": "/data/media/movies/4K Movie (2020)",
+    "hasFile": false,
+    "monitored": false,
+    "tags": [
+      7
+    ]
+  },
+  {
+    "id": 23,
+    "title": "Anime Movie",
+    "tmdbId": 5023,
+    "path": "/data/media/anime-movies/Anime Movie (2003)",
+    "hasFile": true,
+    "monitored": true,
+    "tags": []
+  }
+]

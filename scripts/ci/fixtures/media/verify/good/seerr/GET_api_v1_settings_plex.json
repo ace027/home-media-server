@@ -1,0 +1,45 @@
+{
+  "name": "media-01",
+  "machineId": "synthetic-machine-id",
+  "ip": "plex",
+  "port": 32400,
+  "useSsl": false,
+  "libraries": [
+    {
+      "id": "1",
+      "name": "Movies",
+      "enabled": true,
+      "type": "movie"
+    },
+    {
+      "id": "2",
+      "name": "TV Shows",
+      "enabled": true,
+      "type": "show"
+    },
+    {
+      "id": "3",
+      "name": "Anime TV",
+      "enabled": true,
+      "type": "show"
+    },
+    {
+      "id": "4",
+      "name": "Music",
+      "enabled": false,
+      "type": "artist"
+    },
+    {
+      "id": "5",
+      "name": "Movies 4K",
+      "enabled": true,
+      "type": "movie"
+    },
+    {
+      "id": "6",
+      "name": "TV 4K",
+      "enabled": true,
+      "type": "show"
+    }
+  ]
+}

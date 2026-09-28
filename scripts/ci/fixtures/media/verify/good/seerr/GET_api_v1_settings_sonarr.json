@@ -1,0 +1,39 @@
+[
+  {
+    "id": 0,
+    "name": "Sonarr",
+    "hostname": "sonarr",
+    "port": 8989,
+    "useSsl": false,
+    "baseUrl": "",
+    "is4k": false,
+    "isDefault": true,
+    "activeProfileId": 1,
+    "activeDirectory": "/data/media/tv",
+    "activeAnimeDirectory": "/data/media/tv"
+  },
+  {
+    "id": 1,
+    "name": "Sonarr 4K",
+    "hostname": "sonarr-4k",
+    "port": 8989,
+    "useSsl": false,
+    "baseUrl": "",
+    "is4k": true,
+    "isDefault": true,
+    "activeProfileId": 4,
+    "activeDirectory": "/data/media/tv-4k"
+  },
+  {
+    "id": 2,
+    "name": "Sonarr Anime",
+    "hostname": "sonarr-anime",
+    "port": 8989,
+    "useSsl": false,
+    "baseUrl": "",
+    "is4k": false,
+    "isDefault": false,
+    "activeProfileId": 1,
+    "activeDirectory": "/data/media/anime-tv"
+  }
+]

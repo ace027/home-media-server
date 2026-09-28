@@ -1,0 +1,21 @@
+[
+  {
+    "id": 21,
+    "relativePath": "file-21.mkv",
+    "size": 1000,
+    "quality": {
+      "quality": {
+        "id": 7,
+        "name": "Bluray-720p",
+        "resolution": 720
+      },
+      "revision": {
+        "version": 1
+      }
+    },
+    "mediaInfo": {
+      "resolution": "1280x720",
+      "videoCodec": "x265"
+    }
+  }
+]

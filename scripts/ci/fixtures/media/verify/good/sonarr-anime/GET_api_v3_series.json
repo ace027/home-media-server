@@ -1,0 +1,13 @@
+[
+  {
+    "id": 1,
+    "title": "Anime A",
+    "tvdbId": 3001,
+    "path": "/data/media/anime-tv/Anime A",
+    "monitored": true,
+    "tags": [],
+    "statistics": {
+      "episodeFileCount": 12
+    }
+  }
+]

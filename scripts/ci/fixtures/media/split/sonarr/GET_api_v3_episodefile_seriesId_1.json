@@ -1,0 +1,40 @@
+[
+  {
+    "id": 201,
+    "relativePath": "file-201.mkv",
+    "size": 1000,
+    "quality": {
+      "quality": {
+        "id": 19,
+        "name": "Bluray-2160p",
+        "resolution": 2160
+      },
+      "revision": {
+        "version": 1
+      }
+    },
+    "mediaInfo": {
+      "resolution": "3840x2160",
+      "videoCodec": "x265"
+    }
+  },
+  {
+    "id": 202,
+    "relativePath": "file-202.mkv",
+    "size": 1000,
+    "quality": {
+      "quality": {
+        "id": 19,
+        "name": "Bluray-2160p",
+        "resolution": 2160
+      },
+      "revision": {
+        "version": 1
+      }
+    },
+    "mediaInfo": {
+      "resolution": "3840x2160",
+      "videoCodec": "x265"
+    }
+  }
+]
