@@ -79,6 +79,19 @@ fix_owner() {
   sudo -n chown -R "$(id -u):$(id -g)" "$T"
 }
 
+# root_rb <appdata-root> <ts>: fix_owner hands .rollback to the test user,
+# but --apply only uses .rollback, .rollback/<ts> and <ts>-undone when root
+# owns them (as it does on the VM), so give those back to root first.
+# Deepest first: once .rollback (700) is root's, the test user cannot see in.
+root_rb() {
+  local d
+  for d in "$1/.rollback/$2-undone" "$1/.rollback/$2" "$1/.rollback"; do
+    if [[ -e "$d" && ! -L "$d" ]]; then
+      sudo -n chown 0:0 "$d"
+    fi
+  done
+}
+
 # tree_sig <dir>: a listing + content hash, to prove a dir is unchanged.
 tree_sig() {
   (cd "$1" && find . -printf '%p %y %s\n' | sort && find . -type f -exec md5sum {} + | sort)
@@ -99,8 +112,10 @@ EOF
 cat > "$T/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 # Stub docker: `compose ... ps --status running --services` prints
-# $STUB_RUNNING, one name per line; anything else succeeds silently.
+# $STUB_RUNNING, one name per line; anything else succeeds silently. The
+# COMPOSE_FILE it was given goes to compose-file.log.
 printf '%s\n' "$*" >> "${STUB_LOG_DIR:?}/docker.log"
+printf '%s\n' "${COMPOSE_FILE:-}" >> "${STUB_LOG_DIR:?}/compose-file.log"
 if [[ "$1" == compose && " $* " == *" ps --status running --services "* ]]; then
   for s in ${STUB_RUNNING:-}; do
     printf '%s\n' "$s"
@@ -339,6 +354,15 @@ grep -q -- "compose --project-directory $REPO ps --status running --services" "$
 no_secrets restore-dry-run "$OUT"
 ok restore-dry-run
 
+# --- 5b: relative COMPOSE_FILE (as load_env sets it from .env), run from /tmp ---
+# The exported value wins over .env (load_env never overrides a set var).
+: > "$T/logs/compose-file.log"
+run_capture env -C /tmp COMPOSE_FILE=compose.yaml:compose.lan.yaml "$RESTORE" --stage "$TS1"
+expect restore-relative-compose-file 0 '^DRY-RUN: mv -T '
+[[ "$(sort -u "$T/logs/compose-file.log")" == "$REPO/compose.yaml:$REPO/compose.lan.yaml" ]] \
+  || fail restore-relative-compose-file "docker saw COMPOSE_FILE='$(sort -u "$T/logs/compose-file.log" | tr '\n' ' ')', expected absolute paths under $REPO"
+ok restore-relative-compose-file
+
 # --- restore CLI errors -------------------------------------------------------------
 run_capture "$RESTORE" --bogus
 [[ $RC -eq 2 ]] || fail restore-unknown-flag "exit $RC"
@@ -405,6 +429,7 @@ if [[ $HAVE_SUDO -eq 1 ]]; then
   run_capture "$RESTORE" --rollback "$TS1"
   expect rollback-dry-run 0 '^DRY-RUN: mv -T '
   [[ "$(tree_sig "$T/vm")" == "$before" ]] || fail rollback-dry-run "dry-run changed the tree"
+  root_rb "$T/vm" "$TS1"
   run_capture "${SUDO[@]}" "$RESTORE" --rollback "$TS1" --apply
   fix_owner
   [[ $RC -eq 0 ]] || fail rollback-apply "exit $RC"
@@ -527,6 +552,7 @@ if [[ $HAVE_SUDO -eq 1 ]]; then
   ok first-restore
 
   # --- 13b: rollback after a first restore: everything restored is undone ---------
+  root_rb "$T/vm2" "$TS13"
   run_capture env APPDATA_ROOT="$T/vm2" "${SUDO[@]}" "$RESTORE" --rollback "$TS13" --apply
   fix_owner
   [[ $RC -eq 0 ]] || fail first-rollback "exit $RC"
@@ -585,6 +611,7 @@ if [[ $HAVE_SUDO -eq 1 ]]; then
     || fail fail-after-swap "rollback command not named"
   grep -qF "qm rollback 200 pre-phase2" <<<"$OUT" || fail fail-after-swap "VM snapshot rollback not named"
   no_secrets fail-after-swap "$OUT"
+  root_rb "$T/vm3" "$TS15"
   run_capture env APPDATA_ROOT="$T/vm3" "${SUDO[@]}" "$RESTORE" --rollback "$TS15" --apply
   fix_owner
   [[ $RC -eq 0 ]] || fail fail-after-swap-rollback "exit $RC"
@@ -595,6 +622,76 @@ if [[ $HAVE_SUDO -eq 1 ]]; then
 else
   skip "fail-after-swap (no sudo)"
 fi
+
+# --- 16: planted symlinks / foreign owners under .rollback are refused ------------
+# A planted <ts>-undone symlink would make root move the restored dirs to
+# wherever it points; a planted .rollback symlink would do the same for the
+# saved dirs. Both refuse in either mode; with --apply a .rollback/<ts> not
+# owned by root refuses too.
+TS16=20260928-121100
+V5="$T/vm5"
+mkdir -p "$V5/.rollback/$TS16/radarr" "$V5/radarr" "$T/outside-dir"
+echo old > "$V5/.rollback/$TS16/radarr/old.txt"
+echo restored > "$V5/radarr/radarr.db"
+printf 'radarr\n' > "$V5/.rollback/$TS16/installed"
+ln -s "$T/outside-dir" "$V5/.rollback/$TS16-undone"
+v5_before="$(tree_sig "$V5")"
+# as_apply5 <args...>: as_apply against $V5, with .rollback root-owned.
+as_apply5() {
+  if [[ $HAVE_SUDO -eq 1 ]]; then
+    root_rb "$V5" "$TS16"
+    run_capture env APPDATA_ROOT="$V5" "${SUDO[@]}" "$RESTORE" "$@" --apply
+    fix_owner
+  else
+    run_capture env APPDATA_ROOT="$V5" "$RESTORE" "$@"
+  fi
+}
+as_apply5 --rollback "$TS16"
+expect rollback-undone-symlink 1 "$V5/.rollback/$TS16-undone is a symlink"
+[[ -z "$(ls -A "$T/outside-dir")" ]] || fail rollback-undone-symlink "something was moved through the symlink"
+[[ "$(tree_sig "$V5")" == "$v5_before" ]] || fail rollback-undone-symlink "the appdata tree changed"
+# The dry-run refuses the symlink too.
+run_capture env APPDATA_ROOT="$V5" "$RESTORE" --rollback "$TS16"
+expect rollback-undone-symlink-dry-run 1 "$V5/.rollback/$TS16-undone is a symlink"
+rm "$V5/.rollback/$TS16-undone"
+ok rollback-undone-symlink
+
+if [[ $HAVE_SUDO -eq 1 ]]; then
+  v5_before="$(tree_sig "$V5")"
+  root_rb "$V5" "$TS16"
+  sudo -n chown 65534 "$V5/.rollback/$TS16"
+  run_capture env APPDATA_ROOT="$V5" "${SUDO[@]}" "$RESTORE" --rollback "$TS16" --apply
+  fix_owner
+  expect rollback-foreign-owner 1 "$V5/.rollback/$TS16 is not owned by root"
+  [[ "$(tree_sig "$V5")" == "$v5_before" && ! -e "$V5/.rollback/$TS16-undone" ]] \
+    || fail rollback-foreign-owner "something moved"
+  # Dry-run as the test user does not enforce ownership.
+  run_capture env APPDATA_ROOT="$V5" "$RESTORE" --rollback "$TS16"
+  expect rollback-foreign-owner-dry-run 0 "^DRY-RUN: mv -T $V5/radarr $V5/.rollback/$TS16-undone/radarr"
+  ok rollback-foreign-owner
+else
+  skip "rollback-foreign-owner (no sudo)"
+fi
+
+# Restore mode: a .rollback symlink is refused before the swap.
+TS16B=20260928-121200
+V6="$T/vm6"
+mkdir -p "$V6/radarr"
+echo old > "$V6/radarr/old.txt"
+make_stage "$TS16B" "$V6"
+ln -s "$T/outside-dir" "$V6/.rollback"
+v6_before="$(tree_sig "$V6")"
+if [[ $HAVE_SUDO -eq 1 ]]; then
+  run_capture env APPDATA_ROOT="$V6" "${SUDO[@]}" "$RESTORE" --stage "$TS16B" --apply
+  fix_owner
+else
+  run_capture env APPDATA_ROOT="$V6" "$RESTORE" --stage "$TS16B"
+fi
+expect restore-rollback-symlink 1 "$V6/.rollback is a symlink"
+[[ -z "$(ls -A "$T/outside-dir")" ]] || fail restore-rollback-symlink "something was moved through the symlink"
+[[ "$(tree_sig "$V6")" == "$v6_before" ]] || fail restore-rollback-symlink "the appdata tree changed"
+if grep -q 'failed after the swap started' <<<"$OUT"; then fail restore-rollback-symlink "refused after the swap started"; fi
+ok restore-rollback-symlink
 
 no_secrets ssh-argv "$(cat "$T/logs/ssh.log")"
 printf 'all restore tests passed\n'

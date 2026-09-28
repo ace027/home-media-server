@@ -122,6 +122,20 @@ dir_is_empty() {
   [[ -d "$1" && -z "$(find "$1" -mindepth 1 -maxdepth 1 -print -quit)" ]]
 }
 
+# check_rb_dirs <path...>: .rollback and its <ts>/<ts>-undone dirs sit in
+# the PUID-owned $APPDATA_ROOT, and root moves whole service dirs into them.
+# Refuse a symlink (both modes: a planted link would send those moves
+# anywhere) and, with --apply, an existing dir not owned by root.
+check_rb_dirs() {
+  local d
+  for d in "$@"; do
+    [[ ! -L "$d" ]] || die "$d is a symlink; refusing to use it (nothing was moved)"
+    if [[ $APPLY -eq 1 && -e "$d" && "$(stat -c %u -- "$d")" != 0 ]]; then
+      die "$d is not owned by root; refusing to use it (nothing was moved)"
+    fi
+  done
+}
+
 # --- precondition: none of the 9 services is running (both modes) -----------
 running="$("${DC[@]}" ps --status running --services)" || die "docker compose ps failed"
 busy=()
@@ -140,6 +154,7 @@ fi
 if [[ -n "$ROLLBACK_TS" ]]; then
   RB="$APPDATA_ROOT/.rollback/$ROLLBACK_TS"
   UNDONE="$APPDATA_ROOT/.rollback/$ROLLBACK_TS-undone"
+  check_rb_dirs "$APPDATA_ROOT/.rollback" "$RB" "$UNDONE"
   [[ -d "$RB" ]] || die "no rollback dir $RB"
   saved=()
   while IFS= read -r -d '' e; do
@@ -325,6 +340,9 @@ fi
 # --- 2: swap each staged service into place ----------------------------------
 # Each swapped-in service is appended to .rollback/<ts>/installed right after
 # its mv, so --rollback can undo it even when no previous dir was saved.
+# .rollback itself is root-only (700, root:root) and is checked first.
+check_rb_dirs "$APPDATA_ROOT/.rollback" "$RB"
+run install -d -m 700 -o 0 -g 0 "$APPDATA_ROOT/.rollback"
 run mkdir -p -m 700 "$RB"
 [[ ! -L "$RB/installed" ]] || die "$RB/installed is a symlink"
 SWAP_STARTED=$APPLY
