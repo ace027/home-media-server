@@ -1,0 +1,18 @@
+# Shared service template. Consumed by other stack files via:
+#   extends: {file: _common.yaml, service: base}
+# Do not add an `image:` here; this is a template only, never started directly.
+services:
+  base:
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TZ: ${TZ}
+      PUID: ${PUID}
+      PGID: ${PGID}
+      UMASK: ${UMASK}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

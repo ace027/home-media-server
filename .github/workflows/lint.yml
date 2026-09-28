@@ -1,0 +1,59 @@
+name: lint
+
+on:
+  push:
+    branches: ['**']
+  pull_request: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy env
+        run: cp .env.example .env
+
+      - name: Validate compose config
+        run: docker compose config -q
+
+      - name: Check pinned images
+        run: scripts/ci/check-pinned-images.sh
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Shellcheck
+        run: shellcheck -x scripts/lib/common.sh scripts/mkdirs.sh scripts/host/*.sh scripts/vm/*.sh scripts/ci/*.sh
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Yamllint
+        run: yamllint -s .
+
+      - name: Sandbox mkdirs + verify (SKIP_HW)
+        run: |
+          d=$(mktemp -d)
+          DATA_ROOT="$d/data" APPDATA_ROOT="$d/appdata" scripts/mkdirs.sh
+          DATA_ROOT="$d/data" SKIP_HW=1 scripts/vm/verify.sh
+
+      - name: Host-script dry-runs against stubs
+        run: |
+          d=$(mktemp -d)
+          scripts/ci/make-host-stubs.sh "$d/bin"
+          SOURCE_POOL=oldpool PATH="$d/bin:$PATH" scripts/host/05-import-pool.sh
+          PATH="$d/bin:$PATH" scripts/host/00-zfs-datasets.sh
+          PATH="$d/bin:$PATH" scripts/host/20-create-vm.sh
+
+      - name: Executable bits
+        run: test -z "$(find scripts -name '*.sh' ! -path 'scripts/lib/*' ! -perm -u+x)"

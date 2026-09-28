@@ -1,0 +1,9 @@
+# Root Compose file. Services live in stacks/*.yaml; shared defaults in stacks/_common.yaml.
+name: media
+include:
+  - stacks/edge.yaml
+  - stacks/media.yaml
+  - stacks/arr.yaml
+  - stacks/download.yaml
+  - stacks/transcode.yaml
+  - stacks/ops.yaml
