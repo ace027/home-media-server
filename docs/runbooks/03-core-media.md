@@ -433,7 +433,7 @@ DRY-RUN: POST lidarr /api/v1/downloadclient {"enable":true,"protocol":"usenet","
 DRY-RUN: DELETE prowlarr /api/v1/indexer/1
 DRY-RUN: DELETE prowlarr /api/v1/indexerproxy/1
 DRY-RUN: DELETE prowlarr /api/v1/downloadclient/1
-DRY-RUN: POST prowlarr /api/v1/downloadclient {"enable":true,"protocol":"usenet","priority":1,"name":"SABnzbd","implementationName":"SABnzbd","implementation":"Sabnzbd","configContract":"SabnzbdSettings","tags":[],"fields":[{"order":0,"name":"host","value":"sabnzbd","privacy":"normal"},{"order":1,"name":"port","value":8080,"privacy":"normal"},{"order":2,"name":"useSsl","value":false,"privacy":"normal"},{"order":3,"name":"urlBase","privacy":"normal"},{"order":4,"name":"apiKey","privacy":"apiKey","value":"***"},{"order":5,"name":"username","privacy":"userName"},{"order":6,"name":"password","privacy":"password"},{"order":7,"name":"category","value":"","privacy":"normal"},{"order":8,"name":"priority","value":-100,"privacy":"normal"}],"removeCompletedDownloads":true,"removeFailedDownloads":true}
+DRY-RUN: POST prowlarr /api/v1/downloadclient {"enable":true,"protocol":"usenet","priority":1,"name":"SABnzbd","implementationName":"SABnzbd","implementation":"Sabnzbd","configContract":"SabnzbdSettings","tags":[],"fields":[{"order":0,"name":"host","value":"sabnzbd","privacy":"normal"},{"order":1,"name":"port","value":8080,"privacy":"normal"},{"order":2,"name":"useSsl","value":false,"privacy":"normal"},{"order":3,"name":"urlBase","privacy":"normal"},{"order":4,"name":"apiKey","privacy":"apiKey","value":"***"},{"order":5,"name":"username","privacy":"userName"},{"order":6,"name":"password","privacy":"password"},{"order":7,"name":"category","value":"*","privacy":"normal"},{"order":8,"name":"priority","value":-100,"privacy":"normal"}],"removeCompletedDownloads":true,"removeFailedDownloads":true}
 DRY-RUN: PUT prowlarr /api/v1/applications/2 {"syncLevel":"fullSync","name":"Sonarr","implementationName":"Sonarr","implementation":"Sonarr","configContract":"SonarrSettings","tags":[],"fields":[{"order":0,"name":"prowlarrUrl","value":"http://prowlarr:9696","privacy":"normal"},{"order":1,"name":"baseUrl","value":"http://sonarr:8989","privacy":"normal"},{"order":2,"name":"apiKey","privacy":"apiKey","value":"***"},{"order":3,"name":"syncCategories","value":[5000,5010,5020,5030,5040,5045,5050,5090],"privacy":"normal"},{"order":4,"name":"animeSyncCategories","value":[5070],"privacy":"normal"},{"order":5,"name":"syncAnimeStandardFormatSearch","value":false,"privacy":"normal"}],"id":2}
 DRY-RUN: POST prowlarr /api/v1/applications {"syncLevel":"fullSync","name":"Sonarr Anime","implementationName":"Sonarr","implementation":"Sonarr","configContract":"SonarrSettings","tags":[],"fields":[{"order":0,"name":"prowlarrUrl","value":"http://prowlarr:9696","privacy":"normal"},{"order":1,"name":"baseUrl","value":"http://sonarr-anime:8989","privacy":"normal"},{"order":2,"name":"apiKey","privacy":"apiKey","value":"***"},{"order":3,"name":"syncCategories","value":[],"privacy":"normal"},{"order":4,"name":"animeSyncCategories","value":[5070],"privacy":"normal"},{"order":5,"name":"syncAnimeStandardFormatSearch","value":false,"privacy":"normal"}]}
 DRY-RUN: POST prowlarr /api/v1/applications {"syncLevel":"fullSync","name":"Sonarr 4K","implementationName":"Sonarr","implementation":"Sonarr","configContract":"SonarrSettings","tags":[],"fields":[{"order":0,"name":"prowlarrUrl","value":"http://prowlarr:9696","privacy":"normal"},{"order":1,"name":"baseUrl","value":"http://sonarr-4k:8989","privacy":"normal"},{"order":2,"name":"apiKey","privacy":"apiKey","value":"***"},{"order":3,"name":"syncCategories","value":[5000,5010,5020,5030,5040,5045,5050,5090],"privacy":"normal"},{"order":4,"name":"animeSyncCategories","value":[5070],"privacy":"normal"},{"order":5,"name":"syncAnimeStandardFormatSearch","value":false,"privacy":"normal"}]}
@@ -451,9 +451,10 @@ Check that:
 - every *arr gets its root folders and exactly one `SABnzbd` client with
   `host` `sabnzbd`, port `8080` and its own category (`tv`, `anime`,
   `tv-4k`, `movies`, `movies-4k`, `music`);
-- Prowlarr's `SABnzbd` client has an empty `category` (`"value":""`).
-  Prowlarr's default, `prowlarr`, is not a SABnzbd category, and saving
-  the client would fail on it;
+- Prowlarr's `SABnzbd` client has `category` `*` (`"value":"*"`), SABnzbd's
+  default category. Prowlarr's default, `prowlarr`, is not a SABnzbd
+  category, and an empty category is rejected, so saving would fail on
+  either;
 - every non-SABnzbd client (qBittorrent, NZBGet) and every torrent
   indexer is deleted;
 - Prowlarr gets the six apps with `"syncLevel":"fullSync"`, and the old
@@ -582,7 +583,7 @@ non-4K episodes are never moved; you decide on each one.
    Example (from the CI fixtures, `--apply` against the stub apps and a
    temp tree):
    ```
-   [INFO] plan: 3 move, 1 skip-mixed, 1 check, anime-4k=1 -> <tmp>/api-appdata/.migration/split-4k-20260928-184200.tsv
+   [INFO] plan: 3 move, 1 skip-mixed, 1 check, anime-4k=1 -> <tmp>/api-appdata/.migration/split-4k-20260928-191538.tsv
    [INFO] check: movie radarr 15 Scope Movie
    [INFO] skip-mixed: series sonarr 2 Mixed Show
    [INFO] POST radarr-4k /api/v3/command {"name":"RescanMovie"}; waiting
@@ -597,20 +598,26 @@ non-4K episodes are never moved; you decide on each one.
    [INFO] PUT sonarr /api/v3/series/1
    [INFO] POST sonarr /api/v3/command {"name":"RescanSeries"}; waiting
    [INFO] moved 3/3: series 'UHD Show' -> sonarr-4k id 41
-   [INFO] split: 3 titles moved; manifest <tmp>/api-appdata/.migration/split-4k-20260928-184200.manifest.tsv (undo: scripts/vm/30-split-4k.sh --undo <tmp>/api-appdata/.migration/split-4k-20260928-184200.manifest.tsv --apply)
+   [INFO] split: 3 titles moved; manifest <tmp>/api-appdata/.migration/split-4k-20260928-191538.manifest.tsv (undo: scripts/vm/30-split-4k.sh --undo <tmp>/api-appdata/.migration/split-4k-20260928-191538.manifest.tsv --apply)
    ```
 
    Keep the manifest path from the last line: `--undo` uses it. The
    manifest is the plan's rows plus two columns: `new_id` (the title's id
    in the 4K instance) and `prior` (its monitored state in HD before the
-   split, seasons included). `--undo` restores exactly that state.
+   split, seasons included, plus any episodes you had unmonitored).
+   `--undo` restores exactly that state.
 
    If a row fails halfway, the script stops with
    `[ERROR] row <n> partially applied; run --undo <manifest>`; see
    Rollback. If a rescan times out, the message says `re-running is
    safe; raise WAIT_TIMEOUT (seconds) for large libraries`. For the split,
-   the row is then partially applied: run the `--undo` first, then the
-   split again with a larger `WAIT_TIMEOUT`.
+   the row is then partially applied: run the `--undo` first, with the
+   same larger timeout (its rescans can take as long), then the split
+   again:
+   `WAIT_TIMEOUT=1800 scripts/vm/30-split-4k.sh --undo <manifest> --apply`.
+   If an undo stops partway (`undo stopped at row <n>; re-run the same
+   --undo command to continue`), re-run the same command: rows already
+   moved back are finished without moving them again.
 
 ## 6. Plex
 
@@ -876,7 +883,7 @@ Use the smallest rollback that covers the problem. From the smallest:
 
 | Undo | Run | What it undoes | Prefer it when |
 |---|---|---|---|
-| The 4K split | `scripts/vm/30-split-4k.sh --undo /opt/appdata/.migration/split-4k-<ts>.manifest.tsv`, then again with `--apply` | In reverse order: moves each title back, deletes it from the 4K instance (`deleteFiles=false`, the files stay), restores its HD monitored state from the manifest's `prior` column (seasons included), removes the `4k-only` tag, rescans it; renames the manifest to `.undone` | A split row failed halfway, or you want the 4K titles back in HD. Your manual moves for mixed titles are not included |
+| The 4K split | `scripts/vm/30-split-4k.sh --undo /opt/appdata/.migration/split-4k-<ts>.manifest.tsv`, then again with `--apply` | In reverse order: moves each title back, deletes it from the 4K instance (`deleteFiles=false`, the files stay), restores its HD monitored state from the manifest's `prior` column (seasons and unmonitored episodes included), removes the `4k-only` tag, rescans it; renames the manifest to `.undone` | A split row failed halfway, or you want the 4K titles back in HD. Your manual moves for mixed titles are not included |
 | The file tree since step 5 | **On the Proxmox host:** `qm shutdown 200 && zfs rollback tank/data@pre-4k-split && qm start 200` | Every file change on `tank/data` since the snapshot, including new downloads and imports | `--undo` can't run (for example its preflight fails because files were changed by hand). The apps' databases still describe the split afterwards, so combine it with `--undo` fixes by hand or with the VM rollback below |
 | The config restore | `sudo scripts/vm/10-restore-appdata.sh --rollback <ts>`, then again with `--apply` (services stopped) | Every service dir the restore installed (listed in `.rollback/<ts>/installed`) moves to `.rollback/<ts>-undone/<svc>`; then each pre-restore dir saved in `.rollback/<ts>` moves back into `/opt/appdata`. A service with no saved dir (a first restore) is simply absent afterwards. The old SAB queue goes back into the undone config, `.rollback/<ts>-undone/sabnzbd/admin`, never into a live dir | The restored configs are wrong and you want to push them again (the host archive stays the source of truth), or a restore failed after the swap (Troubleshooting) |
 | The whole phase on the VM | **On the Proxmox host:** `qm rollback 200 pre-phase2 && qm start 200`. If the split ran: `qm rollback 200 pre-phase2 && zfs rollback tank/data@pre-4k-split && qm start 200` | The VM disk: appdata (every app database change from steps 2–10), `.env` and the containers. `/data` is not on the VM disk, hence the `zfs rollback` after a split, run while the VM is still stopped | Anything else, including the remap and the wiring, which have no script undo |
@@ -902,6 +909,7 @@ Example (from the CI fixtures):
 DRY-RUN: mv -T -- '<tmp>/vmdata/media/tv-4k/UHD Show' '<tmp>/vmdata/media/tv/UHD Show'
 DRY-RUN: DELETE sonarr-4k /api/v3/series/41?deleteFiles=false
 DRY-RUN: PUT sonarr /api/v3/series/1 {"id":1,"title":"UHD Show","tvdbId":2001,"path":"/data/media/tv/UHD Show","monitored":true,"tags":[],"qualityProfileId":1,"seasonFolder":true,"seriesType":"standard","seasons":[{"seasonNumber":0,"monitored":false},{"seasonNumber":1,"monitored":true},{"seasonNumber":2,"monitored":true}],"statistics":{"episodeFileCount":2}}
+DRY-RUN: PUT sonarr /api/v3/episode/monitor {"episodeIds":[1002],"monitored":false}
 DRY-RUN: POST sonarr /api/v3/command {"name":"RescanSeries","seriesId":1}
 [INFO] undo 2/3: movie radarr 13 Unmonitored 4K Movie
 DRY-RUN: mv -T -- '<tmp>/vmdata/media/movies-4k/Unmonitored 4K Movie (2017)' '<tmp>/vmdata/media/movies/Unmonitored 4K Movie (2017)'
@@ -913,7 +921,7 @@ DRY-RUN: mv -T -- '<tmp>/vmdata/media/movies-4k/Big 4K Movie (2019)' '<tmp>/vmda
 DRY-RUN: DELETE radarr-4k /api/v3/movie/31?deleteFiles=false
 DRY-RUN: PUT radarr /api/v3/movie/11 {"id":11,"title":"Big 4K Movie","year":2019,"tmdbId":1011,"path":"/data/media/movies/Big 4K Movie (2019)","hasFile":true,"monitored":true,"tags":[],"qualityProfileId":1}
 DRY-RUN: POST radarr /api/v3/command {"name":"RescanMovie","movieId":11}
-DRY-RUN: mv -T -- <tmp>/api-appdata/.migration/split-4k-20260928-184200.manifest.tsv <tmp>/api-appdata/.migration/split-4k-20260928-184200.manifest.tsv.undone
+DRY-RUN: mv -T -- <tmp>/api-appdata/.migration/split-4k-20260928-191538.manifest.tsv <tmp>/api-appdata/.migration/split-4k-20260928-191538.manifest.tsv.undone
 [INFO] undo of 3 rows (dry-run; pass --apply to make it)
 ```
 
@@ -970,8 +978,9 @@ safe; raise WAIT_TIMEOUT`.** The app's rescan took longer than
 `WAIT_TIMEOUT` seconds (default 600). For the remap, re-run it with a
 larger value, for example
 `WAIT_TIMEOUT=1800 scripts/vm/20-arr-remap.sh --apply`. For the split,
-the row is partially applied: run the `--undo` it names, then the split
-again with a larger `WAIT_TIMEOUT` (step 5, item 5).
+the row is partially applied: run the `--undo` it names with the same
+larger `WAIT_TIMEOUT`, then the split again (step 5, item 5). An undo that
+stops partway is continued by re-running the same `--undo` command.
 
 **Restore failed after the swap** (`restore <ts> failed after the swap
 started (exit <n>); steps not completed: <steps>`). The stage is already

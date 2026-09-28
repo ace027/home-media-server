@@ -264,7 +264,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
   - Delete all `remotepathmapping` entries.
 - **Prowlarr:**
   - Delete indexers with `protocol=="torrent"` and all `indexerproxy` entries.
-  - Delete Prowlarr download clients whose `implementation` ≠ `Sabnzbd`, and upsert its SAB client the same way, with an empty `category` field (`""`): the schema default `prowlarr` is not a SAB category, and Prowlarr's save-time test would reject it.
+  - Delete Prowlarr download clients whose `implementation` ≠ `Sabnzbd`, and upsert its SAB client the same way, with `category` `*` (SAB's default category, always present): the schema default `prowlarr` is not a SAB category (its save-time test fails), and an empty category trips Prowlarr's NotEmpty validator, which returns HTTP 400 without `forceSave`.
   - Upsert applications. **Match an existing app by the host in its `baseUrl`, then by name.** Delete apps whose host is `animesonarr`, `nzbget` or `qbittorrent`, or that are unmatched.
 
     | name | implementation | baseUrl | syncCategories |
@@ -294,19 +294,20 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
 - Apply:
   1. **Preflight every `move` row:** `dst` must not exist, and `src` must exist and sit under the expected HD root. Any failure exits 1 before anything is moved.
   2. Then, per row:
-     - Record `prior`, the HD item's monitored state from the plan's `GET` (before any change), as compact JSON: `{"m":<bool>}`, plus `"s":{"<seasonNumber>":<bool>,…}` for series.
+     - Record `prior`, the HD item's monitored state from the plan's `GET` (before any change), as compact JSON: `{"m":<bool>}`, plus `"s":{"<seasonNumber>":<bool>,…}` for series, and `"e":[ids]` for the series' episodes that are `monitored:false` (from `GET /api/v3/episode?seriesId=<id>`; omitted when none). Sonarr re-monitors every episode of a season whose monitored flag changes, so `e` is needed to restore them.
      - `mv "$src" "$dst"`, where `dst` is `/data/media/{movies-4k|tv-4k}/<basename>`. Then append the row to `…/split-4k-<ts>.manifest.tsv` with `new_id` `-` and `prior`, so a failure later in the row is still undoable.
      - Build the add payload from `GET {4k}/movie/lookup/tmdb?tmdbId=<id>` or `GET {4k}/series/lookup?term=tvdb:<id>`. Set `qualityProfileId`, `rootFolderPath`, `path=dst` and `monitored=true`, plus `addOptions` `{searchForMovie:false}` or `{searchForMissingEpisodes:false,monitor:"existing"}`. `POST` it. Rewrite the row's manifest line with the id created in the 4K instance.
      - Rescan the 4K item with `wait_cmd`.
      - Ensure the HD tag `4k-only` exists, then `PUT` the HD item with `monitored=false` and the tag added. For series, also set every season `monitored=false`.
      - Rescan the HD item (`{"name":"RescanMovie","movieId":<id>}` or `{"name":"RescanSeries","seriesId":<id>}`) with `wait_cmd`, so HD drops the moved files now rather than at its next refresh. With `--apply`, each rescan logs `[INFO] POST <svc> /api/v3/command {"name":"RescanMovie|RescanSeries"}; waiting`; the HD one follows the `[INFO] PUT <hd> /api/v3/<kind>/<id>` line.
   3. Manifest columns: `kind instance id title src dst files action new_id prior`.
-- Undo, in reverse manifest order:
-  1. `mv dst src`.
-  2. `DELETE` the 4K item with `deleteFiles=false`.
-  3. Restore the HD item's monitored state from `prior`: the item's `monitored`, and each season listed in `prior` (a season added since the split keeps its current state). Remove the tag.
+- Undo, in reverse manifest order (resumable: re-running the same `--undo` after a failure continues):
+  1. `mv dst src`. If `src` is an empty directory (an HD rescan with `createEmpty*Folders` recreated it), `rmdir` it first; a non-empty `src` fails the preflight. A row whose `dst` is gone and `src` exists was moved back by an earlier undo: skip the `mv`.
+  2. `DELETE` the 4K item with `deleteFiles=false` (for a row already moved back, HTTP 404 counts as done).
+  3. Restore the HD item's monitored state from `prior`: the item's `monitored`, and each season listed in `prior` (a season added since the split keeps its current state). Remove the tag. If `prior.e` is non-empty, `PUT /api/v3/episode/monitor {"episodeIds":e,"monitored":false}`.
   4. Rescan the HD item.
-  5. After the last row, rename the manifest to `<manifest>.undone`.
+  5. After the last row, rename the manifest to `<manifest>.undone`; on a failure print `undo stopped at row <n>; re-run the same --undo command to continue` and keep the manifest.
+  - The manifest's `new_id` is rewritten atomically (temp file in the same dir, then `mv -f`).
   - A manifest with the older header (ending at `new_id`, no `prior`) is accepted with `[WARN] <manifest> has no prior column (older manifest): every HD item and season is re-monitored`, and step 3 sets the item and every season to monitored. Any other header exits 1.
 
 **`scripts/vm/verify-media.sh`** (VM, as `media`; read-only)
@@ -585,6 +586,9 @@ Done during `/legion:plan 2`, not part of the build: PROJECT.md (R5, R12, decisi
 | 32 | `20-arr-remap.sh` preconditions | Every item to move must have its folder under the new root, else exit 1 with nothing changed | Phase 2 review cycle 1 |
 | 33 | `25-arr-wire.sh` Prowlarr | Prowlarr's SAB client has an empty `category` | Phase 2 review cycle 1 |
 | 34 | `arr.sh` `api`, `arr_dc`, `wait_cmd` | SAB `status:false` counts as an error; `arr_dc` makes `COMPOSE_FILE` absolute; `wait_cmd` timeout message says re-running is safe and names `WAIT_TIMEOUT` | Phase 2 review cycle 1 |
+| 35 | `25-arr-wire.sh` Prowlarr | Prowlarr's SAB client category is `*` (row 33's empty value is rejected by Prowlarr's validator) | Phase 2 review cycle 2 |
+| 36 | `30-split-4k.sh` undo, manifest | Undo is resumable; empty recreated `src` removed; `prior.e` restores unmonitored episodes; atomic `new_id` rewrite | Phase 2 review cycle 2 |
+| 37 | `10-restore-appdata.sh` | `.rollback`, `.rollback/<ts>` and `-undone` refused if a symlink (always) or not root-owned (`--apply`); `.rollback` created root-owned 700 | Phase 2 review cycle 2 |
 
 ## Complexity Assessment
 

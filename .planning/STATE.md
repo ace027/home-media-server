@@ -2,8 +2,8 @@
 
 ## Current Position
 - **Phase**: 2 of 6 (under review)
-- **Status**: Phase 2 under review — cycle 1/3 fixes applied (2 blockers, 10 warnings); cycle 2 re-review next; owner hardware acceptance (runbook 03) pending
-- **Last Activity**: Phase 2 review cycle 1 (2026-09-28)
+- **Status**: Phase 2 under review — cycle 2/3 fixes applied (cycle 1: 2 blockers, 10 warnings; cycle 2: 1 blocker, 3 warnings); cycle 3 re-review next; owner hardware acceptance (runbook 03) pending
+- **Last Activity**: Phase 2 review cycle 2 (2026-09-28)
 
 ## Progress
 ```
