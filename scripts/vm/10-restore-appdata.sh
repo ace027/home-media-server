@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 # shellcheck source=scripts/lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
+# shellcheck source=scripts/lib/arr.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/arr.sh"
 
 # .env first, then defaults, so .env values are not masked by the defaults.
 # (sudo resets the environment, so under sudo these come from .env; the
@@ -14,7 +16,8 @@ PGID="${PGID:-1000}"
 
 SERVICES=(plex seerr tautulli sonarr sonarr-anime radarr lidarr prowlarr sabnzbd)
 FRESH=(sonarr-4k radarr-4k jellyfin)
-DC=(docker compose --project-directory "$REPO_ROOT")
+# arr_dc (arr.sh) makes a relative COMPOSE_FILE from .env absolute.
+DC=(arr_dc)
 
 # *arr/Prowlarr databases checked before the swap: <svc>/<file>.
 ARR_DBS=(sonarr/sonarr.db sonarr-anime/sonarr.db radarr/radarr.db lidarr/lidarr.db prowlarr/prowlarr.db)
