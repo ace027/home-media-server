@@ -30,7 +30,7 @@ Taken from the owner's migration archive `/tank/migration/old-docker-2026-09-27.
 | Usenet imports | Sonarr/Radarr always **move** SABnzbd downloads (`CanMoveFiles=true`), which is a same-inode rename on one filesystem. Hardlinks only apply to Copy mode (torrents). History `downloadFolderImported` records `droppedPath` and `importedPath` | Sonarr/Radarr source |
 | Path editor | `PUT /api/v3/series/editor` (`seriesIds`) and `/api/v3/movie/editor` (`movieIds`), each with `rootFolderPath` and `moveFiles:false`, update DB paths only | Sonarr/Radarr source |
 | Unmonitor risk | Sonarr `autoUnmonitorPreviouslyDownloadedEpisodes` / Radarr `autoUnmonitorPreviouslyDownloadedMovies` unmonitor items whose files seem missing during a scan | Sonarr source |
-| Prowlarr | Indexer `protocol` is `usenet` or `torrent`. App fields: `prowlarrUrl`, `baseUrl`, `apiKey`, `syncCategories`, `animeSyncCategories`. `syncLevel` is `fullSync`. Sync command: `{"name":"ApplicationIndexerSync","forceSync":true}` | Prowlarr source |
+| Prowlarr | Indexer `protocol` is `usenet` or `torrent`. App fields: `prowlarrUrl`, `baseUrl`, `apiKey`, `syncCategories`, `animeSyncCategories`. `syncLevel` is a **top-level** property of the application resource (not a `fields[]` entry); the schema defaults it to `disabled`, so it must be set to `fullSync` explicitly. Sync command: `{"name":"ApplicationIndexerSync","forceSync":true}` | Prowlarr source |
 | SABnzbd API | `get_config`; `set_config&section=categories&keyword=<n>&dir=<d>` (creates the category if missing); `del_config&section=categories&keyword=<n>`; misc settings one per call via `set_config&section=misc&keyword=<k>&value=<v>`; `mode=version` needs no key | sabnzbd source |
 | Plex prefs | `autoEmptyTrash`, `LanNetworksBandwidth`, `customConnections`; linuxserver/plex has no `ADVERTISE_IP`; the lsio init adds `abc` to the `/dev/dri` group | Plex docs, lsio source |
 | Seerr routing | Override rules set only profile, root folder and tags, never the server. A separate anime Sonarr is chosen manually, or by an admin editing a **pending** request. 4K servers are entries with `is4k:true`. The `REQUEST_4K*` and `AUTO_APPROVE_4K*` permissions are separate | Seerr source |
@@ -45,15 +45,15 @@ Taken from the owner's migration archive `/tank/migration/old-docker-2026-09-27.
 | R2.1 | Services defined and healthy | Must | `docker compose ps` shows sabnzbd, prowlarr, sonarr, sonarr-anime, sonarr-4k, radarr, radarr-4k, lidarr, plex, seerr, tautulli `running (healthy)`. `docker compose --profile jellyfin config -q` succeeds, and jellyfin is absent without the profile. `verify-media.sh` check `compose-healthy` PASS |
 | R2.2 | Pinned, same-or-newer images | Must | `scripts/ci/check-pinned-images.sh` (with `COMPOSE_PROFILES=jellyfin`) exit 0. `scripts/ci/check-min-versions.sh` exits 0, and exits 1 on a downgraded fixture |
 | R2.3 | Configs restored with rollback | Must | `30-push-appdata.sh` then `10-restore-appdata.sh --apply` place the 9 app dirs under `/opt/appdata/<svc>` owned by `PUID:PGID`. *arr DB `PRAGMA integrity_check` = `ok`. `baseline.json` is written. `--rollback <ts>` restores the previous dirs |
-| R2.4 | Paths remapped, library adopted without re-downloads | Must | `verify-media.sh` checks `arr-rootfolders` and `library-adopted` PASS: no root folder or item path under `/data/{shows,movies,anime}`; per instance, current file count (HD + files moved to 4K per manifest) ≥ baseline; and `no-regrab` PASS: no `grabbed` history event since the baseline time except for titles tagged `e2e-test` |
+| R2.4 | Paths remapped, library adopted without re-downloads | Must | `verify-media.sh` checks `arr-rootfolders` and `library-adopted` PASS: no root folder or item path under `/data/{shows,movies,anime}`; per instance, current file count (HD + files moved to 4K per manifest) ≥ baseline; and `no-regrab` PASS: no `grabbed` history event since the baseline time for an episode or movie that had a file at the baseline (HD instances), or for an item the split moved into a 4K instance. Other grabs (new episodes, test requests) are reported as info, not failures |
 | R2.5 | SABnzbd categories (R3) | Must | `sab-categories` PASS: categories are exactly `*`, `tv`, `tv-4k`, `movies`, `movies-4k`, `music`, `anime`; `download_dir=/data/usenet/incomplete`; `complete_dir=/data/usenet/complete`; each category dir = its name |
 | R2.6 | Usenet-only download clients and indexers | Must | `download-clients` PASS: each *arr and Prowlarr has exactly one download client (`Sabnzbd`, host `sabnzbd`, port 8080, correct category; Prowlarr's has no category requirement), no qBittorrent/NZBGet, and 0 indexers with `protocol=torrent` in each *arr |
 | R2.7 | Prowlarr sync to all 6 (R4) | Must | `prowlarr-sync` PASS: 6 apps with `fullSync`, 0 torrent indexers, 0 indexer proxies, ≥1 enabled usenet indexer; each *arr has ≥1 indexer whose name ends in ` (Prowlarr)` and every such indexer's name (minus the suffix) matches an enabled usenet indexer in Prowlarr |
 | R2.8 | 4K split | Must | `30-split-4k.sh` moves titles whose every file is ≥2160p into `movies-4k`/`tv-4k`, adds them to radarr-4k/sonarr-4k and unmonitors and tags them `4k-only` in HD. `4k-split` PASS: no monitored HD item has a ≥2160p file, except series listed `skip-mixed` in the newest plan TSV (reported in the detail as `mixed=<n>`). The runbook has the owner resolve each mixed series |
 | R2.9 | Plex libraries | Must | `plex-sections` PASS: sections Movies (`/data/media/movies`, `/data/media/anime-movies`), TV Shows (`/data/media/tv`), Anime TV (`/data/media/anime-tv`), Music (`/data/media/music`), Movies 4K (`/data/media/movies-4k`), TV 4K (`/data/media/tv-4k`); no location outside `/data/media`; `autoEmptyTrash` = 0 |
-| R2.9b | Plex watch state and library presence | Must | `plex-watched` PASS: number of items with `viewCount>0` across all sections (owner token) ≥ `baseline.plex_watched` (SKIP if the baseline is `-1`); `plex-counts` PASS: each Plex section's item count equals the matching *arr item count with files (Movies = radarr movies with files outside 4K + anime-movies; TV Shows = sonarr series with files; Anime TV = sonarr-anime; Movies 4K = radarr-4k; TV 4K = sonarr-4k), with a tolerance of `PLEX_COUNT_TOLERANCE` (default 0). Both are the gate before emptying Plex trash |
-| R2.10 | Plex hardware transcoding | Must | `plex-hw` PASS while the owner plays a forced transcode: a session with `transcodeHwRequested=1` and HW decode or encode set |
-| R2.11 | Seerr routing | Must | `seerr-servers` PASS: Radarr (default, non-4K), Radarr 4K (`is4k`, default 4K), Sonarr (default, non-4K), Sonarr 4K (`is4k`, default 4K), Sonarr Anime (non-default), all using service hostnames. The owner's test requests, made as a **non-admin test user** (HD movie auto-approved; 4K movie and anime TV pending, then approved, with the anime one switched to Sonarr Anime), land in the right instance, root and SAB category |
+| R2.9b | Plex watch state and library presence | Must | `plex-watched` PASS: number of watched movies and episodes (`/library/sections/<k>/all?type=1` for movie sections, `?type=4` for show sections, paged, `viewCount>0`, owner token) ≥ `baseline.plex_watched` (SKIP if the baseline is `-1`); `plex-counts` PASS: each Plex section's item count is **at least** the matching *arr item count with files minus `PLEX_COUNT_TOLERANCE` (default 0), with the difference in the detail (the risk is Plex *losing* items; extra unmanaged files are fine) (Movies = radarr movies with files outside 4K + anime-movies; TV Shows = sonarr series with files; Anime TV = sonarr-anime; Movies 4K = radarr-4k; TV 4K = sonarr-4k). Both are the gate before emptying Plex trash |
+| R2.10 | Plex hardware transcoding | Must | `plex-hw` PASS while the owner plays a forced transcode: a session with `transcodeHwRequested` true (or `1`) and HW decode or encode set |
+| R2.11 | Seerr routing | Must | `seerr-servers` PASS: Radarr (default, non-4K), Radarr 4K (`is4k`, default 4K), Sonarr (default, non-4K), Sonarr 4K (`is4k`, default 4K), Sonarr Anime (non-default), all using service hostnames; and `/api/v1/settings/plex` has `ip=plex`, `port=32400`, with Movies, TV Shows, Anime TV, Movies 4K and TV 4K enabled. The owner's test requests, made as a **non-admin test user** (HD movie auto-approved; 4K movie and anime TV pending, then approved, with the anime one switched to Sonarr Anime), land in the right instance, root and SAB category |
 | R2.12 | Atomic imports | Must | `verify-media.sh --watch-import <instance>` PASS: the imported library file has the same inode as the completed download recorded in `/data/usenet/complete/<cat>`, and `droppedPath`/`importedPath` are on the same device |
 | R2.13 | Temporary admin access | Must | `compose.lan.yaml` publishes admin UIs only on `${LAN_IP}`; `docker compose config` without it publishes only `32400` |
 | R2.14 | Jellyfin evaluation | Should | With `--profile jellyfin`, jellyfin is healthy with `/dev/dri` and a read-only `/data/media`; `jellyfin` check PASS, otherwise SKIP |
@@ -160,10 +160,11 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
 - Preconditions:
   - `require_cmd sqlite3 jq docker setpriv`.
   - Exit 1 if any of the 9 services is running (`docker compose ps --status running --services`); hint `docker compose stop <svcs>`.
+  - Exit 1 if any of `$DATA_ROOT/shows`, `$DATA_ROOT/movies` or `$DATA_ROOT/anime` exists. The restored *arr apps still point at those old roots until the remap; a scan of an existing (even empty) old root would drop file records before unmonitor-deleted is turned off.
   - Exit 1 if the stage dir is missing, holds any top-level entry outside the 9 names, or contains a symlink that resolves outside the stage (`find -type l` + `realpath`).
 - Apply, in order:
   1. **Integrity first, on the staged copy, as `PUID`:** for each of `sonarr/sonarr.db`, `sonarr-anime/sonarr.db`, `radarr/radarr.db`, `lidarr/lidarr.db`, `prowlarr/prowlarr.db`, run `setpriv --reuid=$PUID --regid=$PGID --init-groups sqlite3 -readonly <db> 'PRAGMA integrity_check;'`. Any result other than `ok` exits 1 before anything is moved. The Plex DB is opened read-only for the baseline only.
-  2. **Swap in each service:**
+  2. **Swap in each service:** first `mkdir -p -m 700 $APPDATA_ROOT/.rollback/<ts>` unconditionally (step 5 uses it even on a first restore).
      - If `$APPDATA_ROOT/<svc>` is empty, `rmdir` it.
      - If it is non-empty, `mv` it to `$APPDATA_ROOT/.rollback/<ts>/<svc>`.
      - Then `mv -T` staging/<svc> to `$APPDATA_ROOT/<svc>`. `-T` means a leftover dir can never be nested into.
@@ -172,7 +173,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
   5. **SABnzbd, offline, so its first start can't use old paths or queues.** In `sabnzbd/sabnzbd.ini` `[misc]`, set `download_dir = /data/usenet/incomplete` and `complete_dir = /data/usenet/complete` (sed on those two keys). Move `sabnzbd/admin/` to `.rollback/<ts>/sabnzbd-admin`: this is the old queue and history, whose incomplete files don't exist on the new pool. Categories are fixed online by `25-arr-wire.sh --only sab`.
   6. **Report `UrlBase` and `Port`** from each restored `config.xml` (*arr and Prowlarr). If `UrlBase` is non-empty or `Port` isn't the default in the `arr_port` table: `[WARN] <svc> UrlBase=… Port=…; runbook Troubleshooting "UrlBase"`, and `baseline.json` records it. The healthchecks and `arr.sh` assume the defaults.
   7. **Fresh services:** create any missing `$APPDATA_ROOT/{sonarr-4k,radarr-4k,jellyfin}` owned by `PUID:PGID`, mode 700.
-  8. **Baseline:** write `$APPDATA_ROOT/.migration/baseline.json` (mode 600) with `jq -n`:
+  8. **Baseline:** `install -d -m 700 -o $PUID -g $PGID $APPDATA_ROOT/.migration`, then write `$APPDATA_ROOT/.migration/baseline.json` (mode 600, owned by `PUID:PGID`, since the later scripts run as `media`) with `jq -n`:
      ```
      {"created":"<iso8601 UTC>","stage":"<ts>",
       "files":{"sonarr":N,"sonarr-anime":N,"radarr":N,"lidarr":N},
@@ -182,7 +183,8 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
      The counts, run as `PUID` in read-only mode:
      - `files`: `select count(*) from EpisodeFiles` (Sonarr, Sonarr Anime); `from MovieFiles` (Radarr); `from TrackFiles` (Lidarr, `0` if the table is missing).
      - `items_with_files`: `select count(distinct SeriesId) from EpisodeFiles`; `select count(*) from Movies where MovieFileId>0`.
-     - `plex_watched`: `select count(*) from metadata_item_settings where view_count>0` on the Plex DB. `-1` plus a warning on error.
+     - `plex_watched`: the owner's watched movies and episodes, `select count(*) from metadata_item_settings s join metadata_items m on m.guid=s.guid where s.account_id=1 and s.view_count>0 and m.metadata_type in (1,4)` on the Plex DB (account 1 is the server owner; this excludes managed users and rows for deleted items). `-1` plus a warning on error.
+     - **Ids with files**, for `no-regrab`: `$APPDATA_ROOT/.migration/baseline-ids/<svc>.txt` (one id per line, same ownership) from `select Id from Episodes where EpisodeFileId>0` (sonarr, sonarr-anime) and `select Id from Movies where MovieFileId>0` (radarr).
   9. Remove the empty staging dir.
 - Dry-run prints each step as `DRY-RUN:`. The integrity checks still run in dry-run, because they are read-only.
 
@@ -200,12 +202,12 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
   - Calls curl `-sS --fail-with-body --max-time 30 -K -`. The curl config on stdin contains the `url = "http://<ip>:<port><path>"` line and the `header = "X-Api-Key: …"` line (`X-Plex-Token` for Plex), or for SABnzbd the full URL with `apikey=…`. Keys never appear in argv.
   - The body goes via `--data-binary @<body-file>` with `header = "Content-Type: application/json"` in the same stdin config. A body file and a stdin config can be combined.
   - Prints the body. Non-2xx makes it exit 1 with `<METHOD> <svc> <path> -> HTTP <code>`, without printing the key.
-- `sab_api <mode> [k=v …]` builds `/api?mode=<mode>&output=json&<k=v urlencoded via jq @uri>` and calls `api`.
+- `sab_api <mode> [k=v …]` builds `/api?mode=<mode>&output=json&<k=v urlencoded via jq @uri>` and calls `api`. It is for read-only modes (`get_config`, `version`, `queue`, `history` listing). Every SAB change (`set_config`, `del_config`, queue/history delete, `pause`, `resume`) goes through `arr_mutate sabnzbd GET <path>`, so it is dry-run by default and counted.
 - `wait_cmd <svc> <command-json-response>`: polls `GET {base}/command/<id>` every 3 s until `status` is `completed` (return 0) or `failed`/`aborted` (exit 1), with a 600 s timeout.
 - `arr_mutate <svc> <METHOD> <path> [body-file]`:
   - Dry-run: prints `DRY-RUN: <METHOD> <svc> <path> <compact body>` with `apiKey`, `password` and `*Key` fields replaced by `***`.
   - `--apply`: calls `api`.
-- `same_state <desired-json> <current-json>`: jq comparison that **ignores fields with `privacy` ≠ `normal`, or whose value is `********`**. It compares only these keys: `enable`, `implementation`, `name`, and field values for `host`, `port`, `useSsl`, `baseUrl`, `prowlarrUrl`, the category fields, `syncLevel` and `syncCategories`. This makes a second `--apply` issue 0 mutations on real apps.
+- `same_state <desired-json> <current-json>`: jq comparison that **ignores fields with `privacy` ≠ `normal`, or whose value is `********`**. It compares only these keys: the top-level `enable`, `implementation`, `name` and `syncLevel` (when present), and field values for `host`, `port`, `useSsl`, `baseUrl`, `prowlarrUrl`, the category fields, `syncCategories` and `animeSyncCategories`. This makes a second `--apply` issue 0 mutations on real apps.
 
 **`scripts/vm/20-arr-remap.sh`** (VM, as `media`)
 - Remap table:
@@ -222,7 +224,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
   3. `GET {base}/series` or `/movie` and select items whose `path` starts with `<old>/`. `PUT {base}/series/editor {"seriesIds":[…],"rootFolderPath":"<new>","moveFiles":false}`, or `/movie/editor` with `movieIds`.
   4. Re-GET. If any item path still starts with `<old>/`, exit 1 and list the ids; the old root is not deleted.
   5. `DELETE {base}/rootfolder/<id>` for the old root.
-  6. `POST {base}/command {"name":"RescanSeries"}` or `{"name":"RescanMovie"}`, then `wait_cmd`.
+  6. Only if step 3 changed items: `POST {base}/command {"name":"RescanSeries"}` or `{"name":"RescanMovie"}`, then `wait_cmd`.
 - Lidarr: `POST /api/v1/rootfolder {"name":"Music","path":"/data/media/music","defaultQualityProfileId":<lowest id from /qualityprofile>,"defaultMetadataProfileId":<lowest id from /metadataprofile>}` if missing.
 - Output: `[INFO] <svc>: <n> items <old> -> <new>`. A re-run finds 0 items and makes 0 mutations.
 
@@ -237,6 +239,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
   3. For each of `tv tv-4k movies movies-4k music anime`: `set_config categories keyword=<c> dir=<c>` if missing or different.
   4. `del_config categories` for `series`, `anime-series` and `software`, if present.
   5. `mode=queue&name=purge&del_files=1` and `mode=history&name=delete&value=all&del_files=1`, but only if the queue or history holds anything created before the baseline time. These are old jobs whose files are gone.
+  6. `--only sab` only: `mode=pause` if the queue isn't already paused, so nothing downloads before the *arr apps and Prowlarr are wired (an RSS grab through an old indexer would land in a deleted category). The full run resumes it at the end.
 - **Per-*arr desired state:**
 
   | svc | root folders | category field | category |
@@ -268,22 +271,26 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
     | Radarr 4K | Radarr | `http://radarr-4k:7878` | schema default |
     | Lidarr | Lidarr | `http://lidarr:8686` | schema default |
 
-    All of them use `syncLevel=fullSync`, `prowlarrUrl=http://prowlarr:9696` and `apiKey=<app key>`.
-  - `POST /api/v1/command {"name":"ApplicationIndexerSync","forceSync":true}`, then `wait_cmd`.
+    All of them set the top-level `syncLevel="fullSync"` and the fields `prowlarrUrl=http://prowlarr:9696` and `apiKey=<app key>`.
+  - Only if this run made any mutation: `POST /api/v1/command {"name":"ApplicationIndexerSync","forceSync":true}`, then `wait_cmd`.
+  - **SAB resume:** if the SAB queue is paused (left paused by `--only sab`), `mode=resume` as the last step.
 - A second `--apply` makes 0 mutating calls; the dry-run then prints `[INFO] no changes`.
 
 **`scripts/vm/30-split-4k.sh`** (VM, as `media`)
 - Modes: default dry-run (writes the plan and prints a summary), `--apply`, `--undo <manifest> [--apply]`.
 - Env: `QP_4K_RADARR`, `QP_4K_SONARR` (quality profile names in the 4K instances, default `Ultra-HD`). If a profile is missing, exit 1 and list the available names.
 - Plan: `$APPDATA_ROOT/.migration/split-4k-<ts>.tsv`, with columns `kind instance id title src dst files action`:
-  - `movie`: every `moviefile` has `quality.quality.resolution >= 2160` → `move`.
+  - A file counts as 4K if `max(quality.quality.resolution, height from mediaInfo.resolution)` ≥ 2160, or the `mediaInfo` width is ≥ 3200 (scope releases such as 3840x1600). If the quality resolution and `mediaInfo` disagree about 4K, the title's action is `check` (listed, not moved).
+  - Titles already tagged `4k-only` in HD are skipped, so a re-run plans 0 moves. Unmonitored titles are **not** skipped.
+  - `movie`: every movie file is 4K → `move`.
   - `series`: ≥1 episode file and all ≥2160 → `move`; some ≥2160 → `skip-mixed`; none → the series is not listed.
   - `files` is the number of media files.
+  - Anime (`sonarr-anime`, and radarr titles under `/data/media/anime-movies`) is not split. The summary reports `anime-4k=<n>` titles with 4K files, and the runbook records the owner's choice for them.
 - Apply:
   1. **Preflight every `move` row:** `dst` must not exist, and `src` must exist and sit under the expected HD root. Any failure exits 1 before anything is moved.
   2. Then, per row:
      - `mv "$src" "$dst"`, where `dst` is `/data/media/{movies-4k|tv-4k}/<basename>`.
-     - Build the add payload from `GET {4k}/movie/lookup/tmdb?tmdbId=<id>` or `GET {4k}/series/lookup?term=tvdb:<id>`. Set `qualityProfileId`, `rootFolderPath`, `path=dst` and `monitored=true`, plus `addOptions` `{searchForMovie:false}` or `{searchForMissingEpisodes:false,monitor:"all"}`. `POST` it.
+     - Build the add payload from `GET {4k}/movie/lookup/tmdb?tmdbId=<id>` or `GET {4k}/series/lookup?term=tvdb:<id>`. Set `qualityProfileId`, `rootFolderPath`, `path=dst` and `monitored=true`, plus `addOptions` `{searchForMovie:false}` or `{searchForMissingEpisodes:false,monitor:"existing"}`. `POST` it.
      - Rescan the 4K item with `wait_cmd`.
      - Ensure the HD tag `4k-only` exists, then `PUT` the HD item with `monitored=false` and the tag added. For series, also set every season `monitored=false`.
      - Append the row to `…/split-4k-<ts>.manifest.tsv`, adding the ids created in the 4K instance.
@@ -304,7 +311,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
      - Moved = sum of `files` in the manifests (sonarr/radarr rows).
      - PASS if current + moved ≥ `baseline.files` for Sonarr, or ≥ `baseline.items_with_files` for Radarr.
      - SKIP if `baseline.json` is missing.
-  5. **`no-regrab`**: `GET {base}/history/since?date=<baseline.created>&eventType=grabbed` on each HD instance. PASS if every grabbed item carries the tag `e2e-test`.
+  5. **`no-regrab`**: `GET {base}/history/since?date=<baseline.created>&eventType=grabbed` on sonarr, sonarr-anime, radarr, sonarr-4k and radarr-4k. FAIL if a grab on an HD instance has an `episodeId`/`movieId` listed in `baseline-ids/<svc>.txt`, or a grab on a 4K instance has a `seriesId`/`movieId` created by a split manifest. The detail reports `other=<n>` for the remaining grabs. SKIP if `baseline.json` is missing.
   6. **`sab-categories`**: categories equal `* tv tv-4k movies movies-4k music anime`, the dirs match, and nothing in the queue or history predates the baseline.
   7. **`download-clients`**
   8. **`prowlarr-sync`**
@@ -317,7 +324,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
   15. **`jellyfin`**: SKIP unless running; otherwise `/health` is `Healthy` and `/dev/dri` exists in the container.
 - **`--watch-import <svc>`** maps the service to its SAB category using the wiring table, then:
   1. Records the start time.
-  2. Every 5 s runs `find /data/usenet/complete/<cat> -type f -newermt @<start>` and records `path inode` pairs.
+  2. Every 5 s runs `find /data/usenet/complete/<cat> -type f -newerct @<start>` and records `path inode` pairs (ctime, not mtime: unrar restores archived mtimes).
   3. When `GET {base}/history?eventType=3&sortKey=date&sortDirection=descending&pageSize=5` (Sonarr's `downloadFolderImported` event type) or the Radarr equivalent shows a record newer than the start: `stat` its `data.importedPath`. PASS if the inode is among those recorded and `stat -c %d` matches that of `/data/usenet/complete`. It prints `PASS import <svc> inode=<n>`.
   4. FAIL after `WATCH_TIMEOUT` seconds (default 1800).
 - Tests drive every check through the API stubs; there is no `SKIP_APPS` flag.
@@ -362,7 +369,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
 3. Drop any `-<hex>` segment of 7 or more hex characters (the Plex build hash).
 4. Compare the remaining dotted version with `sort -V`, then compare `ls` numerically.
 
-Output: `BELOW-MIN: <image> < <min>` and exit 1 on any failure, otherwise `OK: <n> images at or above minimum`. Images whose repo isn't listed are ignored. A fixture test covers:
+Output: `BELOW-MIN: <image> < <min>` and exit 1 on any failure, `NO-IMAGES` and exit 1 if no listed repo is found at all, otherwise `OK: <n> images at or above minimum`. Images whose repo isn't listed are ignored. A fixture test covers:
 - plex (hash) at ls324 vs ls323;
 - seerr v3.4.1 vs v3.4.0;
 - sonarr 4.0.19.2979-ls321 vs 4.0.19.2979-ls320.
@@ -387,9 +394,9 @@ Output: `BELOW-MIN: <image> < <min>` and exit 1 on any failure, otherwise `OK: <
 3. **VM:** `sudo apt-get install -y jq sqlite3`, then `git pull` on `dev`. In `.env`, set `LAN_IP=192.168.50.16` and uncomment `COMPOSE_FILE`. Then `docker compose pull`.
 4. **Host:** `VM_HOST=media@192.168.50.16 scripts/host/30-push-appdata.sh` (dry-run), then `--apply`.
 5. **VM:** `sudo scripts/vm/10-restore-appdata.sh --stage <ts>` (dry-run), then `--apply`.
-6. **VM:** `docker compose up -d sonarr sonarr-anime radarr lidarr`, then `scripts/vm/20-arr-remap.sh` (dry-run), then `--apply`.
-7. **VM:** `docker compose up -d sabnzbd`, then `scripts/vm/25-arr-wire.sh --only sab` (dry-run), then `--apply`.
-8. **VM:** `docker compose up -d` (all core services), then `scripts/vm/25-arr-wire.sh` (dry-run), then `--apply`, then a second `--apply` to confirm it reports "no changes".
+6. **VM:** confirm `test ! -e /data/shows && test ! -e /data/movies && test ! -e /data/anime`, then `docker compose up -d sonarr sonarr-anime radarr lidarr`, then `scripts/vm/20-arr-remap.sh` (dry-run), then `--apply`.
+7. **VM:** `docker compose up -d sabnzbd`, then `scripts/vm/25-arr-wire.sh --only sab` (dry-run), then `--apply` (leaves the SAB queue paused).
+8. **VM:** `docker compose up -d` (all core services), then `scripts/vm/25-arr-wire.sh` (dry-run), then `--apply`, then a second `--apply` to confirm it reports "no changes". The first full `--apply` resumes the SAB queue.
 9. **Owner, 4K split:**
    1. Confirm the 4K quality profile names in radarr-4k and sonarr-4k.
    2. On the host, `zfs snapshot tank/data@pre-4k-split`.
@@ -402,17 +409,18 @@ Output: `BELOW-MIN: <image> < <min>` and exit 1 on any failure, otherwise `OK: <
     4. Check HW transcoding is on.
     5. Run `verify-media.sh` and require `plex-watched` and `plex-counts` to PASS **before** emptying the trash.
 11. **Owner, Seerr UI:**
-    1. Set up the servers per the contract.
-    2. Set default permissions.
-    3. Update every existing family user.
-    4. Create the non-admin user `e2e-test`.
+    1. Point Seerr's Plex connection at `plex:32400`, sync libraries and enable Movies, TV Shows, Anime TV, Movies 4K and TV 4K.
+    2. Set up the *arr servers per the contract.
+    3. Set default permissions.
+    4. Update every existing family user.
+    5. Create the non-admin user `e2e-test`.
 12. **Owner, Tautulli UI:** point Tautulli at `http://plex:32400`.
 13. **Owner, Twingate:** add a resource for `192.168.50.16` covering the admin ports.
 14. **Owner, test requests** as `e2e-test`:
     - an HD movie (auto-approved);
     - a 4K movie (approved by the owner);
     - an anime show (owner switches it to Sonarr Anime while pending, then approves).
-    Before each approval, tag the target title `e2e-test` in the *arr, and run `verify-media.sh --watch-import <svc>`.
+    Start `verify-media.sh --watch-import <svc>` in a second terminal before making (HD) or approving (4K, anime) each request.
 15. **Owner:** force a transcode in Plex, run `scripts/vm/verify-media.sh`, and paste the output into the runbook's Acceptance record.
 
 ## Compatibility Constraints
@@ -428,6 +436,7 @@ Output: `BELOW-MIN: <image> < <min>` and exit 1 on any failure, otherwise `OK: <
 | No ssh key from host to VM | `30-push` exits 1 with the `ssh-copy-id` hint | CI with an ssh stub returning 255 |
 | Staging dir already exists | Exit 1, naming it | CI |
 | Staged tree has an unexpected entry or a symlink | `10-restore` exits 1 before moving anything | CI fixture |
+| Old roots `/data/{shows,movies,anime}` exist at restore | `10-restore` exits 1 naming them, before anything is moved | CI fixture |
 | Target services running during restore | Exit 1 with `docker compose stop` hint | CI docker stub |
 | *arr DB integrity not `ok` | Exit 1 **before** anything is moved (the check runs on the staged copy as `PUID`) | CI with a corrupted sqlite fixture |
 | Empty or auto-created target dir | `rmdir`, then `mv -T`; never nests | CI fixture |
@@ -482,6 +491,8 @@ Output: `BELOW-MIN: <image> < <min>` and exit 1 on any failure, otherwise `OK: <
   - `docker compose` honors `STUB_HEALTH="svc=healthy …"` for `ps --format json`.
   - `curl` reads the `url`/`header` lines from `-K -` stdin and maps the IP back to the service. It logs `METHOD svc path` (no key) to `$STUB_LOG` and returns `$STUB_FIXTURES/<svc>/<METHOD>_<path with / ? & = → _>.json`. If that file is missing it returns `{}` for GET and HTTP 200 with an empty body for mutations. `STUB_HTTP_<svc>=<code>` forces an error.
   - `ssh` honors `STUB_SSH_RC`.
+  - `docker compose … config --images` prints `$STUB_IMAGES` (newline-separated).
+  - Like real `curl --fail-with-body`, the curl stub exits 22 when the code is ≥400.
 - **Size:** ~150 + ~150 + ~250 + ~120 + ~200 lines.
 
 ### 4K split, verification, runbook
@@ -541,7 +552,7 @@ Done during `/legion:plan 2`, not part of the build: PROJECT.md (R5, R12, decisi
 | 8 | CLI contract | Local flag parsing before `parse_common_args` | Critique #8 |
 | 9 | All scripts | `docker compose --project-directory "$REPO_ROOT"` | Critique #9 |
 | 10 | Restore step 2 | `rmdir` empty target, then `mv -T` | Critique #10 |
-| 11 | Key decisions, data flow 11/14 | HD request for a 4K-only title allowed (owner); existing users' permissions edited; `e2e-test` non-admin user; `no-regrab` exempts `e2e-test` | Critique #11 |
+| 11 | Key decisions, data flow 11/14 | HD request for a 4K-only title allowed (owner); existing users' permissions edited; `e2e-test` non-admin user (the `no-regrab` exemption was replaced in row 23) | Critique #11 |
 | 12 | Key decisions, data flow 2/9 | VM snapshot before the restore; ZFS snapshot before the split | Critique #12 |
 | 13 | Wire script, R2.6 | *arr-level torrent indexers and Prowlarr download clients removed | Critique #13 |
 | 14 | Restore step 1 | Integrity check on the staged copy, as `PUID`, read-only | Critique #14 |
@@ -551,6 +562,15 @@ Done during `/legion:plan 2`, not part of the build: PROJECT.md (R5, R12, decisi
 | 18 | Split payloads, Prowlarr upsert | Build from lookup; match by baseUrl host, then name | Critique #18 |
 | 19 | Fixtures, CI grep | Synthetic fixtures enforced | Critique #19 |
 | 20 | Restore steps 4 and 6 | Report `UrlBase`/port; remove stale `TranscoderTempDirectory` | Critique assumptions |
+| 21 | Evidence, `same_state`, Prowlarr apps | `syncLevel` is top-level, set to `fullSync` and compared | Plan critique (blocker) |
+| 22 | Baseline, R2.9b | `plex_watched` counts the owner's watched movies/episodes on both sides; `plex-counts` is a ≥ check | Plan critique (blocker/major) |
+| 23 | Baseline ids, R2.4, `no-regrab`, data flow 14 | Fails only on re-grabs of baseline items or split items, on all 5 video instances; `e2e-test` tag dropped | Plan critique |
+| 24 | Split | `monitor:"existing"`; resolution from quality and mediaInfo, `check` rows; skip `4k-only` tagged instead of unmonitored; `anime-4k` report | Plan critique |
+| 25 | `--watch-import` | `-newerct` instead of `-newermt` | Plan critique |
+| 26 | Restore | Old roots must be absent; `.rollback/<ts>` always created; `.migration` owned by `PUID` | Plan critique (blockers) |
+| 27 | Wire, remap, `arr.sh` | SAB changes via `arr_mutate`; `--only sab` pauses, full run resumes; rescan/sync only after changes | Plan critique |
+| 28 | R2.11, data flow 11 | Seerr's Plex connection and 4K libraries | Plan critique |
+| 29 | Min-versions, stubs | `NO-IMAGES`; `STUB_IMAGES`; curl stub exit 22 | Plan critique |
 
 ## Complexity Assessment
 
