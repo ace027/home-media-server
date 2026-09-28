@@ -49,8 +49,9 @@ Usage: 10-restore-appdata.sh [--stage <ts>] [--apply] [--help]
 Options:
   --stage <ts>     Stage to restore, YYYYMMDD-HHMMSS (default: the newest
                    under \$APPDATA_ROOT/.staging).
-  --rollback <ts>  Move .rollback/<ts>/<svc> back into place; the current
-                   dirs go to .rollback/<ts>-undone.
+  --rollback <ts>  Undo restore <ts>: every dir it installed (listed in
+                   .rollback/<ts>/installed) goes to .rollback/<ts>-undone,
+                   then .rollback/<ts>/<svc> moves back into place.
 
 Environment variables (defaults; normally from .env):
   APPDATA_ROOT=$APPDATA_ROOT
@@ -140,33 +141,69 @@ if [[ -n "$ROLLBACK_TS" ]]; then
   saved=()
   while IFS= read -r -d '' e; do
     name="${e##*/}"
-    [[ "$name" == "sabnzbd-admin" ]] && continue
+    [[ "$name" == "sabnzbd-admin" || "$name" == "installed" ]] && continue
     is_service "$name" || die "unexpected entry in $RB: $name"
     saved+=("$name")
   done < <(find "$RB" -mindepth 1 -maxdepth 1 -print0 | sort -z)
 
+  # .rollback/<ts>/installed lists the services the restore swapped in. Each
+  # of them goes to $UNDONE, whether or not a previous dir was saved (on a
+  # first restore none is). A restore made before this list existed only
+  # has the saved dirs to go by.
+  declare -A installed=()
+  if [[ -f "$RB/installed" && ! -L "$RB/installed" ]]; then
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      is_service "$name" || die "unexpected name in $RB/installed: $name"
+      installed[$name]=1
+    done < "$RB/installed"
+  else
+    log_warn "$RB/installed missing (restore made before it was recorded): only the saved dirs are rolled back; restored dirs with no saved copy stay in place"
+  fi
+
+  declare -A undone=()
   undone_made=0
-  for svc in "${saved[@]}"; do
+  for svc in "${SERVICES[@]}"; do
+    is_saved=0
+    for s in "${saved[@]}"; do
+      [[ "$s" == "$svc" ]] && is_saved=1
+    done
+    [[ $is_saved -eq 1 || -n "${installed[$svc]:-}" ]] || continue
     if [[ -e "$APPDATA_ROOT/$svc" || -L "$APPDATA_ROOT/$svc" ]]; then
       if [[ $undone_made -eq 0 ]]; then
         run mkdir -p -m 700 "$UNDONE"
         undone_made=1
       fi
-      [[ ! -e "$UNDONE/$svc" ]] || die "$UNDONE/$svc already exists; move it away first"
+      [[ ! -e "$UNDONE/$svc" && ! -L "$UNDONE/$svc" ]] || die "$UNDONE/$svc already exists; move it away first"
       run mv -T "$APPDATA_ROOT/$svc" "$UNDONE/$svc"
+      undone[$svc]=1
+    elif [[ -n "${installed[$svc]:-}" ]]; then
+      log_warn "$svc: restored dir $APPDATA_ROOT/$svc is already gone"
     fi
-    run mv -T "$RB/$svc" "$APPDATA_ROOT/$svc"
-    log_info "$svc: restored from .rollback/$ROLLBACK_TS"
+    if [[ $is_saved -eq 1 ]]; then
+      run mv -T "$RB/$svc" "$APPDATA_ROOT/$svc"
+      log_info "$svc: restored from .rollback/$ROLLBACK_TS"
+    else
+      log_info "$svc: undone (no previous dir)"
+    fi
   done
 
-  # sabnzbd-admin came from the restored sabnzbd dir: put it back into that dir,
-  # which is in $UNDONE when an older sabnzbd dir was just rolled back.
+  # sabnzbd-admin is the queue of the restored sabnzbd config: it goes back
+  # into that config wherever it now is. When the restored sabnzbd was just
+  # undone that is $UNDONE/sabnzbd, never the live dir (that would put the
+  # stale queue back). Only a pre-"installed" restore still has it live.
   if [[ -d "$RB/sabnzbd-admin" ]]; then
-    sab_home="$APPDATA_ROOT/sabnzbd"
-    for svc in "${saved[@]}"; do
-      [[ "$svc" == sabnzbd ]] && sab_home="$UNDONE/sabnzbd"
-    done
-    if [[ -e "$sab_home/admin" ]]; then
+    sab_home=""
+    if [[ -n "${undone[sabnzbd]:-}" ]]; then
+      sab_home="$UNDONE/sabnzbd"
+    elif [[ -f "$RB/installed" ]]; then
+      log_warn "restored sabnzbd was not undone; left $RB/sabnzbd-admin in place"
+    else
+      sab_home="$APPDATA_ROOT/sabnzbd"
+    fi
+    if [[ -z "$sab_home" ]]; then
+      :
+    elif [[ -e "$sab_home/admin" || -L "$sab_home/admin" ]]; then
       log_warn "$sab_home/admin exists; left $RB/sabnzbd-admin in place"
     elif [[ ! -d "$sab_home" && $APPLY -eq 1 ]]; then
       log_warn "$sab_home missing; left $RB/sabnzbd-admin in place"
@@ -254,8 +291,40 @@ for rel in "${ARR_DBS[@]}"; do
   log_info "integrity ok: $rel"
 done
 
+# --- failure after the swap: name what did not run and how to recover -------
+# Step 2 empties the stage, so a re-run cannot pick up where a failed one
+# stopped. Once the swap has started, any non-zero exit says so.
+STEP_NAMES=([2]="2 swap" [3]="3 ownership" [4]="4 plex prefs" [5]="5 sabnzbd"
+  [6]="6 UrlBase report" [7]="7 fresh dirs" [8]="8 baseline" [9]="9 remove stage")
+STEP_DONE=1
+SWAP_STARTED=0
+BTMP=""
+on_restore_exit() {
+  local rc=$? i left=""
+  [[ ${BASH_SUBSHELL:-0} -eq 0 ]] || return 0
+  if [[ -n "$BTMP" ]]; then
+    rm -rf -- "$BTMP" || true
+  fi
+  [[ $rc -ne 0 && $SWAP_STARTED -eq 1 ]] || return 0
+  for ((i = STEP_DONE + 1; i <= 9; i++)); do
+    left+="${left:+, }${STEP_NAMES[$i]}"
+  done
+  log_error "restore $TS failed after the swap started (exit $rc); steps not completed: $left"
+  log_error "the stage is (partly) empty, so a re-run cannot resume it"
+  log_error "recover: sudo scripts/vm/10-restore-appdata.sh --rollback $TS --apply"
+  log_error "     or, on the host: qm rollback 200 pre-phase2"
+  log_error "then re-push with scripts/host/30-push-appdata.sh and restore again"
+}
+if [[ $APPLY -eq 1 ]]; then
+  trap on_restore_exit EXIT
+fi
+
 # --- 2: swap each staged service into place ----------------------------------
+# Each swapped-in service is appended to .rollback/<ts>/installed right after
+# its mv, so --rollback can undo it even when no previous dir was saved.
 run mkdir -p -m 700 "$RB"
+[[ ! -L "$RB/installed" ]] || die "$RB/installed is a symlink"
+SWAP_STARTED=$APPLY
 for svc in "${STAGED[@]}"; do
   target="$APPDATA_ROOT/$svc"
   if dir_is_empty "$target" && [[ ! -L "$target" ]]; then
@@ -266,7 +335,14 @@ for svc in "${STAGED[@]}"; do
     log_info "$svc: previous dir saved to .rollback/$TS/$svc"
   fi
   run mv -T "$STAGE/$svc" "$target"
+  if [[ $APPLY -eq 1 ]]; then
+    printf '%s\n' "$svc" >> "$RB/installed"
+  fi
 done
+if [[ $APPLY -eq 0 ]]; then
+  printf 'DRY-RUN: record installed services in %s: %s\n' "$RB/installed" "${STAGED[*]}"
+fi
+STEP_DONE=2
 
 # --- 3: ownership, mode, stale pid files --------------------------------------
 for svc in "${STAGED[@]}"; do
@@ -274,6 +350,7 @@ for svc in "${STAGED[@]}"; do
   run chmod 700 "$APPDATA_ROOT/$svc"
   run find "$APPDATA_ROOT/$svc" -name '*.pid' -delete
 done
+STEP_DONE=3
 
 # --- 4: Plex prefs: no auto-empty-trash, no stale transcoder dir --------------
 if in_stage plex; then
@@ -301,6 +378,7 @@ if in_stage plex; then
     log_warn "Preferences.xml missing; set 'Empty trash automatically' off in the Plex UI before any scan"
   fi
 fi
+STEP_DONE=4
 
 # --- 5: SABnzbd offline: new dirs, old queue/history aside --------------------
 if in_stage sabnzbd; then
@@ -321,6 +399,7 @@ if in_stage sabnzbd; then
     log_info "sabnzbd: old queue/history moved to .rollback/$TS/sabnzbd-admin"
   fi
 fi
+STEP_DONE=5
 
 # --- 6: report non-default UrlBase/Port ---------------------------------------
 for svc in sonarr sonarr-anime radarr lidarr prowlarr; do
@@ -333,6 +412,7 @@ for svc in sonarr sonarr-anime radarr lidarr prowlarr; do
     warn "$svc UrlBase=$urlbase Port=${port:-default}; runbook Troubleshooting \"UrlBase\""
   fi
 done
+STEP_DONE=6
 
 # --- 7: empty dirs for the fresh services -------------------------------------
 for svc in "${FRESH[@]}"; do
@@ -340,6 +420,7 @@ for svc in "${FRESH[@]}"; do
     run install -d -m 700 -o "$PUID" -g "$PGID" "$APPDATA_ROOT/$svc"
   fi
 done
+STEP_DONE=7
 
 # --- 8: baseline ---------------------------------------------------------------
 MIG="$APPDATA_ROOT/.migration"
@@ -384,44 +465,53 @@ if [[ $APPLY -eq 1 ]]; then
     warn "plex: could not read the watched count from the Plex DB; plex_watched=-1 (spot-check watch state in the UI)"
   fi
 
+  # .migration is owned by PUID, so root never writes through a path in it:
+  # each file is built in a root-owned temp dir, then `install` replaces the
+  # destination (a planted symlink is replaced, not followed).
+  for d in "$MIG" "$MIG/baseline-ids"; do
+    [[ ! -L "$d" ]] || die "$d is a symlink; refusing to write the baseline through it"
+  done
   install -d -m 700 -o "$PUID" -g "$PGID" "$MIG" "$MIG/baseline-ids"
-  (
-    umask 077
-    for pair in sonarr:"select Id from Episodes where EpisodeFileId>0;" \
-                sonarr-anime:"select Id from Episodes where EpisodeFileId>0;" \
-                radarr:"select Id from Movies where MovieFileId>0;"; do
-      svc="${pair%%:*}" sql="${pair#*:}"
-      out="$MIG/baseline-ids/$svc.txt"
-      db="$APPDATA_ROOT/$svc/$svc.db"
-      [[ "$svc" == sonarr-anime ]] && db="$APPDATA_ROOT/sonarr-anime/sonarr.db"
-      if [[ -f "$db" ]]; then
-        as_puid sqlite3 -readonly "$db" "$sql" > "$out" || die "baseline ids query failed: $svc"
-      else
-        : > "$out"
-      fi
-      chown "$PUID:$PGID" "$out"
-    done
+  BTMP="$(umask 077 && mktemp -d)"
+  # put_file <tmp> <dest>: install <tmp> as <dest>, mode 600, PUID:PGID.
+  put_file() {
+    install -m 600 -o "$PUID" -g "$PGID" "$1" "$2"
+  }
+  for pair in sonarr:"select Id from Episodes where EpisodeFileId>0;" \
+              sonarr-anime:"select Id from Episodes where EpisodeFileId>0;" \
+              radarr:"select Id from Movies where MovieFileId>0;"; do
+    svc="${pair%%:*}" sql="${pair#*:}"
+    db="$APPDATA_ROOT/$svc/$svc.db"
+    [[ "$svc" == sonarr-anime ]] && db="$APPDATA_ROOT/sonarr-anime/sonarr.db"
+    tmp="$(umask 077 && mktemp "$BTMP/ids.XXXXXX")"
+    if [[ -f "$db" ]]; then
+      as_puid sqlite3 -readonly "$db" "$sql" > "$tmp" || die "baseline ids query failed: $svc"
+    fi
+    put_file "$tmp" "$MIG/baseline-ids/$svc.txt"
+  done
 
-    jq -n \
-      --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      --arg stage "$TS" \
-      --argjson f_sonarr "$f_sonarr" --argjson f_anime "$f_anime" \
-      --argjson f_radarr "$f_radarr" --argjson f_lidarr "$f_lidarr" \
-      --argjson i_sonarr "$i_sonarr" --argjson i_anime "$i_anime" --argjson i_radarr "$i_radarr" \
-      --argjson plex_watched "$plex_watched" \
-      '{created: $created, stage: $stage,
-        files: {sonarr: $f_sonarr, "sonarr-anime": $f_anime, radarr: $f_radarr, lidarr: $f_lidarr},
-        items_with_files: {sonarr: $i_sonarr, "sonarr-anime": $i_anime, radarr: $i_radarr},
-        plex_watched: $plex_watched, warnings: $ARGS.positional}' \
-      --args "${WARNINGS[@]}" > "$MIG/baseline.json"
-    chown "$PUID:$PGID" "$MIG/baseline.json"
-  )
+  tmp="$(umask 077 && mktemp "$BTMP/baseline.XXXXXX")"
+  jq -n \
+    --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg stage "$TS" \
+    --argjson f_sonarr "$f_sonarr" --argjson f_anime "$f_anime" \
+    --argjson f_radarr "$f_radarr" --argjson f_lidarr "$f_lidarr" \
+    --argjson i_sonarr "$i_sonarr" --argjson i_anime "$i_anime" --argjson i_radarr "$i_radarr" \
+    --argjson plex_watched "$plex_watched" \
+    '{created: $created, stage: $stage,
+      files: {sonarr: $f_sonarr, "sonarr-anime": $f_anime, radarr: $f_radarr, lidarr: $f_lidarr},
+      items_with_files: {sonarr: $i_sonarr, "sonarr-anime": $i_anime, radarr: $i_radarr},
+      plex_watched: $plex_watched, warnings: $ARGS.positional}' \
+    --args "${WARNINGS[@]}" > "$tmp"
+  put_file "$tmp" "$MIG/baseline.json"
   log_info "baseline: $MIG/baseline.json (files sonarr=$f_sonarr sonarr-anime=$f_anime radarr=$f_radarr lidarr=$f_lidarr, plex_watched=$plex_watched)"
 else
   printf 'DRY-RUN: write baseline %s (and %s/baseline-ids/*.txt)\n' "$MIG/baseline.json" "$MIG"
 fi
+STEP_DONE=8
 
 # --- 9: remove the (now empty) stage -------------------------------------------
 run rmdir "$STAGE"
+STEP_DONE=9
 
 log_info "restored ${#STAGED[@]} services from $TS; next: docker compose up -d sonarr sonarr-anime radarr lidarr"

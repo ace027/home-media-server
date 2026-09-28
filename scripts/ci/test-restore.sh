@@ -326,6 +326,9 @@ run_capture "$RESTORE" --stage "$TS1"
 [[ $RC -eq 0 ]] || fail restore-dry-run "exit $RC"
 grep -q '^DRY-RUN: mv -T ' <<<"$OUT" || fail restore-dry-run "no DRY-RUN mv -T lines"
 grep -q '^DRY-RUN: write baseline ' <<<"$OUT" || fail restore-dry-run "no DRY-RUN baseline line"
+grep -qF "DRY-RUN: record installed services in $T/vm/.rollback/$TS1/installed: lidarr plex prowlarr radarr sabnzbd seerr sonarr sonarr-anime tautulli" <<<"$OUT" \
+  || fail restore-dry-run "no DRY-RUN line for .rollback/<ts>/installed"
+[[ ! -e "$T/vm/.rollback" ]] || fail restore-dry-run "dry-run created .rollback"
 grep -q 'integrity ok: radarr/radarr.db' <<<"$OUT" || fail restore-dry-run "integrity check did not run in dry-run"
 grep -q 'stale TranscoderTempDirectory="/data/transcode"' <<<"$OUT" || fail restore-dry-run "stale TranscoderTempDirectory not reported"
 if grep -q 'WARN\] [a-z-]* UrlBase=' <<<"$OUT"; then fail restore-dry-run "unexpected UrlBase warning"; fi
@@ -363,6 +366,8 @@ if [[ $HAVE_SUDO -eq 1 ]]; then
   [[ -f "$T/vm/.rollback/$TS1/radarr/old.txt" ]] || fail restore-apply "old radarr not saved to .rollback"
   [[ -f "$T/vm/radarr/radarr.db" && ! -e "$T/vm/radarr/radarr" ]] || fail restore-apply "radarr not swapped in, or nested"
   [[ ! -e "$T/vm/.rollback/$TS1/plex" ]] || fail restore-apply "empty plex dir was saved instead of removed"
+  [[ "$(sort "$T/vm/.rollback/$TS1/installed")" == "$EXPECTED_NAMES" ]] \
+    || fail restore-apply ".rollback/$TS1/installed does not list the 9 services"
   [[ "$(stat -c %a "$T/vm/sonarr")" == 700 ]] || fail restore-apply "sonarr mode is not 700"
   [[ -z "$(find "$T/vm/sonarr" -name '*.pid')" ]] || fail restore-apply "*.pid not deleted"
   grep -q 'autoEmptyTrash="0"' "$T/vm/plex/$PREFS" || fail restore-apply "autoEmptyTrash not 0"
@@ -405,7 +410,13 @@ if [[ $HAVE_SUDO -eq 1 ]]; then
   [[ $RC -eq 0 ]] || fail rollback-apply "exit $RC"
   [[ -f "$T/vm/radarr/old.txt" && ! -e "$T/vm/radarr/radarr.db" ]] || fail rollback-apply "radarr/old.txt not back"
   [[ -f "$T/vm/.rollback/$TS1-undone/radarr/radarr.db" ]] || fail rollback-apply "restored radarr not kept in -undone"
-  [[ -f "$T/vm/sabnzbd/admin/queue10.sab" ]] || fail rollback-apply "sabnzbd-admin not moved back"
+  [[ "$(names "$T/vm/.rollback/$TS1-undone")" == "$EXPECTED_NAMES" ]] || fail rollback-apply "not all 9 restored dirs in -undone"
+  for d in plex seerr tautulli sonarr sonarr-anime lidarr prowlarr sabnzbd; do
+    [[ ! -e "$T/vm/$d" ]] || fail rollback-apply "restored $d still live (no previous dir to put back)"
+  done
+  # The old queue belongs with the (now undone) restored sabnzbd config.
+  [[ -f "$T/vm/.rollback/$TS1-undone/sabnzbd/admin/queue10.sab" && ! -e "$T/vm/.rollback/$TS1/sabnzbd-admin" ]] \
+    || fail rollback-apply "sabnzbd-admin not moved into -undone/sabnzbd/admin"
   grep -q "rolled back $TS1" <<<"$OUT" || fail rollback-apply "no 'rolled back' line"
   ok rollback-apply
 else
@@ -493,20 +504,54 @@ if [[ $HAVE_SUDO -eq 1 ]]; then
   TS13=20260928-120800
   mkdir -p "$T/vm2"
   make_stage "$TS13" "$T/vm2"
+  # A planted symlink in the PUID-owned baseline dir must be replaced, not
+  # written through.
+  mkdir -p "$T/vm2/.migration/baseline-ids"
+  echo outside > "$T/outside.txt"
+  outside_before="$(md5sum < "$T/outside.txt")"
+  ln -s "$T/outside.txt" "$T/vm2/.migration/baseline-ids/radarr.txt"
   run_capture env APPDATA_ROOT="$T/vm2" "${SUDO[@]}" "$RESTORE" --stage "$TS13" --apply
   base_uid="$(stat -c %u "$T/vm2/.migration/baseline.json" 2>/dev/null || echo none)"
   ids_uid="$(stat -c %u "$T/vm2/.migration/baseline-ids/sonarr.txt" 2>/dev/null || echo none)"
   fix_owner
   [[ $RC -eq 0 ]] || fail first-restore "exit $RC"
   [[ -f "$T/vm2/.rollback/$TS13/sabnzbd-admin/queue10.sab" ]] || fail first-restore "sabnzbd-admin not in .rollback/$TS13"
-  [[ "$(ls -A "$T/vm2/.rollback/$TS13")" == sabnzbd-admin ]] || fail first-restore "unexpected entries saved to .rollback"
+  [[ "$(names "$T/vm2/.rollback/$TS13")" == $'installed\nsabnzbd-admin' ]] || fail first-restore "unexpected entries saved to .rollback"
+  [[ "$(md5sum < "$T/outside.txt")" == "$outside_before" ]] || fail first-restore "baseline write went through a symlink"
+  [[ -f "$T/vm2/.migration/baseline-ids/radarr.txt" && ! -L "$T/vm2/.migration/baseline-ids/radarr.txt" \
+    && "$(cat "$T/vm2/.migration/baseline-ids/radarr.txt")" == $'1\n2' ]] \
+    || fail first-restore "baseline-ids/radarr.txt is not a regular file with the ids"
   [[ "$base_uid" == "$PUID" && "$ids_uid" == "$PUID" ]] || fail first-restore "baseline not owned by PUID ($base_uid)"
   [[ "$(names "$T/vm2")" == "$(printf '%s\n' .migration .rollback .staging jellyfin radarr-4k sonarr-4k "$EXPECTED_NAMES" | sort)" ]] \
     || fail first-restore "unexpected appdata layout"
   ok first-restore
+
+  # --- 13b: rollback after a first restore: everything restored is undone ---------
+  run_capture env APPDATA_ROOT="$T/vm2" "${SUDO[@]}" "$RESTORE" --rollback "$TS13" --apply
+  fix_owner
+  [[ $RC -eq 0 ]] || fail first-rollback "exit $RC"
+  if grep -q 'installed missing' <<<"$OUT"; then fail first-rollback "fell back to the legacy rollback"; fi
+  [[ "$(names "$T/vm2/.rollback/$TS13-undone")" == "$EXPECTED_NAMES" ]] || fail first-rollback "not all 9 dirs in -undone"
+  for d in $EXPECTED_NAMES; do
+    [[ ! -e "$T/vm2/$d" ]] || fail first-rollback "$d still live"
+  done
+  [[ -z "$(find "$T/vm2" -path "$T/vm2/.rollback" -prune -o -path '*/sabnzbd/admin' -print)" ]] \
+    || fail first-rollback "a sabnzbd/admin dir is live"
+  [[ -f "$T/vm2/.rollback/$TS13-undone/sabnzbd/admin/queue10.sab" ]] || fail first-rollback "queue not in -undone/sabnzbd/admin"
+  grep -q "rolled back $TS13" <<<"$OUT" || fail first-rollback "no 'rolled back' line"
+  ok first-rollback
 else
   skip "first-restore (no sudo)"
+  skip "first-rollback (no sudo)"
 fi
+
+# --- 13c: rollback of a restore made before .rollback/<ts>/installed existed ------
+TS13C=20260928-120850
+mkdir -p "$T/vm4/.rollback/$TS13C/radarr" "$T/vm4/radarr"
+run_capture env APPDATA_ROOT="$T/vm4" "$RESTORE" --rollback "$TS13C"
+expect legacy-rollback 0 'installed missing'
+grep -qF "DRY-RUN: mv -T $T/vm4/.rollback/$TS13C/radarr $T/vm4/radarr" <<<"$OUT" || fail legacy-rollback "saved radarr not moved back"
+ok legacy-rollback
 
 # --- 14: old root present --------------------------------------------------------------
 TS14=20260928-120900
@@ -519,6 +564,37 @@ grep -qF "$DATA_ROOT/shows exists" <<<"$OUT" || fail old-root "old root not name
 [[ "$(tree_sig "$T/vm/.staging/$TS14")" == "$stage_before" && ! -e "$T/vm/.rollback/$TS14" ]] || fail old-root "something moved"
 rmdir "$DATA_ROOT/shows"
 ok old-root
+
+# --- 15: failure after the swap: recovery is named, and --rollback cleans up ------
+if [[ $HAVE_SUDO -eq 1 ]]; then
+  TS15=20260928-121000
+  mkdir -p "$T/vm3/radarr"
+  echo old > "$T/vm3/radarr/old.txt"
+  radarr_before="$(tree_sig "$T/vm3/radarr")"
+  make_stage "$TS15" "$T/vm3"
+  # No autoEmptyTrash attribute and no "/>" to insert it before: the
+  # post-sed check in step 4 fails.
+  printf '<Preferences PlexOnlineToken="dummytoken0123456789">\n</Preferences>\n' > "$T/vm3/.staging/$TS15/plex/$PREFS"
+  run_capture env APPDATA_ROOT="$T/vm3" "${SUDO[@]}" "$RESTORE" --stage "$TS15" --apply
+  fix_owner
+  [[ $RC -ne 0 ]] || fail fail-after-swap "exit 0"
+  grep -q 'could not set autoEmptyTrash' <<<"$OUT" || fail fail-after-swap "step 4 did not fail as set up"
+  grep -qF "steps not completed: 4 plex prefs, 5 sabnzbd, 6 UrlBase report, 7 fresh dirs, 8 baseline, 9 remove stage" <<<"$OUT" \
+    || fail fail-after-swap "incomplete steps not named"
+  grep -qF "recover: sudo scripts/vm/10-restore-appdata.sh --rollback $TS15 --apply" <<<"$OUT" \
+    || fail fail-after-swap "rollback command not named"
+  grep -qF "qm rollback 200 pre-phase2" <<<"$OUT" || fail fail-after-swap "VM snapshot rollback not named"
+  no_secrets fail-after-swap "$OUT"
+  run_capture env APPDATA_ROOT="$T/vm3" "${SUDO[@]}" "$RESTORE" --rollback "$TS15" --apply
+  fix_owner
+  [[ $RC -eq 0 ]] || fail fail-after-swap-rollback "exit $RC"
+  [[ "$(names "$T/vm3")" == $'.rollback\n.staging\nradarr' ]] || fail fail-after-swap-rollback "appdata not back to its pre-restore layout"
+  [[ "$(tree_sig "$T/vm3/radarr")" == "$radarr_before" ]] || fail fail-after-swap-rollback "previous radarr not restored"
+  [[ "$(names "$T/vm3/.rollback/$TS15-undone")" == "$EXPECTED_NAMES" ]] || fail fail-after-swap-rollback "restored dirs not in -undone"
+  ok fail-after-swap
+else
+  skip "fail-after-swap (no sudo)"
+fi
 
 no_secrets ssh-argv "$(cat "$T/logs/ssh.log")"
 printf 'all restore tests passed\n'
