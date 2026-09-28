@@ -1,0 +1,8 @@
+{
+  "models": {
+    "planning": "sonnet",
+    "execution": "sonnet",
+    "check": "sonnet",
+    "planning_reasoning": false
+  }
+}
