@@ -990,8 +990,9 @@ items that lost their match are still there, with their watch state. The
 detail shows the counts per section. Usually a scan hasn't finished, or
 the old folder was removed before the scan completed: re-add the old
 folder to that library, scan, and follow step 6.3 again. If watched
-titles are still missing, roll back with `qm rollback 200 pre-phase2`
-(Rollback) and redo the Plex steps. A small surplus in Plex is fine
+titles are still missing, roll back the whole phase (Rollback, "The
+whole phase on the VM", including the `zfs rollback` if the split ran)
+and start again from step 2. A small surplus in Plex is fine
 (`+n`, for example extras or files the *arr apps don't manage).
 
 **`plex-hw` SKIP** (`no transcode session`). Nothing was transcoding when
