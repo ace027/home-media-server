@@ -91,7 +91,7 @@
 | Phase | Plans | Completed | Status |
 |-------|-------|-----------|--------|
 | 1. Host & Repo Foundation | 5 | 5 | Complete |
-| 2. Core Media Automation | 4 | 2 | In progress |
+| 2. Core Media Automation | 4 | 3 | In progress |
 | 3. Edge & Secure Access | 3 | 0 | Not started |
 | 4. Quality Automation & AV1 | 3 | 0 | Not started |
 | 5. Observability & Resilience | 3 | 0 | Not started |

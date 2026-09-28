@@ -2,12 +2,12 @@
 
 ## Current Position
 - **Phase**: 2 of 6 (executing)
-- **Status**: Phase 2 executing — wave 1 complete (02-01, 02-02); wave 2 (02-03) next
-- **Last Activity**: Phase 2 wave 1 execution (2026-09-28)
+- **Status**: Phase 2 executing — waves 1–2 complete (02-01, 02-02, 02-03); wave 3 (02-04) next
+- **Last Activity**: Phase 2 wave 2 execution (2026-09-28)
 
 ## Progress
 ```
-[######..............] 30% — 7/23 plans complete
+[#######.............] 35% — 8/23 plans complete
 ```
 
 ## Recent Decisions
