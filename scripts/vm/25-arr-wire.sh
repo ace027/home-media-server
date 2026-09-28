@@ -71,9 +71,10 @@ Each *arr (${ARRS[*]}):
   indexers and all remote path mappings.
 Prowlarr:
   delete torrent indexers, indexer proxies and non-SABnzbd clients; upsert
-  its SABnzbd client; upsert the 6 apps (fullSync; matched by baseUrl host,
-  then name) and delete the rest (e.g. animesonarr); then, only if this run
-  changed anything, ApplicationIndexerSync. Finally resume the SAB queue if
+  its SABnzbd client (empty category); upsert the 6 apps (fullSync;
+  matched by baseUrl host, then name) and delete the rest (e.g.
+  animesonarr); then, only if this run changed anything,
+  ApplicationIndexerSync. Finally resume the SAB queue if
   it is paused.
 
 Preconditions: --only sab needs sabnzbd running; a full run needs
@@ -123,6 +124,9 @@ fi
 # --- validation ------------------------------------------------------------------
 require_safe_path APPDATA_ROOT "$APPDATA_ROOT"
 require_match LAN_IP "$LAN_IP" '^([0-9]{1,3}\.){3}[0-9]{1,3}$' "the VM's LAN IPv4 address, set in .env"
+if [[ "$LAN_IP" == 0.0.0.0 || "$LAN_IP" == 255.255.255.255 ]]; then
+  die "invalid LAN_IP '$LAN_IP': LAN_IP must be the VM's own LAN address"
+fi
 require_cmd docker curl jq hostname
 HOST_S="$(hostname -s)"
 require_match hostname "$HOST_S" '^[A-Za-z0-9][A-Za-z0-9-]*$' "a short host name"
@@ -317,7 +321,9 @@ wire_prowlarr() {
 
   api "$p" GET "$base/downloadclient" >"$W/p-dc.json"
   delete_ids "$p" "$base/downloadclient" "$W/p-dc.json" 'select(.implementation != "Sabnzbd")'
-  upsert_sab_client "$p" "$W/p-dc.json"
+  # Prowlarr's client gets no category: the schema default "prowlarr" is
+  # not a SAB category, and the save-time category test would reject it.
+  upsert_sab_client "$p" "$W/p-dc.json" category ""
 
   api "$p" GET "$base/applications" >"$apps"
   api "$p" GET "$base/applications/schema" >"$schema"

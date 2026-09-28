@@ -90,6 +90,10 @@ printf '<?xml version="1.0" encoding="utf-8"?>\n<Preferences PlexOnlineToken="%s
 # baseline "created" = 2026-09-28T00:00:00Z = 1790553600
 printf '{"created":"2026-09-28T00:00:00Z","stage":"20260928-000000"}\n' > "$APPDATA_ROOT/.migration/baseline.json"
 mkdir -p "$DATA_ROOT"/media/{tv,anime-tv,tv-4k,movies,anime-movies,movies-4k,music}
+# The folders the initial fixtures' items move into (the remap checks them).
+mkdir -p "$DATA_ROOT/media/tv/Show A" "$DATA_ROOT/media/tv/Show B" \
+  "$DATA_ROOT/media/anime-tv/Anime A" "$DATA_ROOT/media/anime-tv/Anime B" \
+  "$DATA_ROOT/media/movies/Movie A (2001)" "$DATA_ROOT/media/movies/Movie B (2002)"
 
 HOST_S="$(hostname -s)"
 ARR_UP="sonarr sonarr-anime radarr lidarr"
@@ -249,6 +253,8 @@ printf '{"id":7,"status":"failed"}\n' > "$T/cmdfx/sonarr/GET_api_v3_command_7.js
 printf '{"id":8,"status":"started"}\n' > "$T/cmdfx/sonarr/GET_api_v3_command_8.json"
 printf '{"id":9,"status":"queued"}\n' > "$T/cmdfx/sonarr/GET_api_v3_command_9.json"
 printf '{"id":9,"status":"completed"}\n' > "$T/cmdfx/sonarr/GET_api_v3_command_9.json.2"
+printf '{"id":10,"status":"cancelled"}\n' > "$T/cmdfx/sonarr/GET_api_v3_command_10.json"
+printf '{"id":11,"status":"orphaned"}\n' > "$T/cmdfx/sonarr/GET_api_v3_command_11.json"
 reset_stub
 run_capture env STUB_RUNNING=sonarr STUB_FIXTURES="$T/cmdfx" "$T/libcall" 'wait_cmd sonarr "{\"id\":9}"'
 expect wait-cmd 0
@@ -256,10 +262,73 @@ expect wait-cmd 0
 run_capture env STUB_RUNNING=sonarr STUB_FIXTURES="$T/cmdfx" "$T/libcall" 'wait_cmd sonarr "{\"id\":7}"'
 expect wait-cmd-failed 1 'command 7 failed'
 run_capture env STUB_RUNNING=sonarr STUB_FIXTURES="$T/cmdfx" WAIT_TIMEOUT=0 "$T/libcall" 'wait_cmd sonarr "{\"id\":8}"'
-expect wait-cmd-timeout 1 "command 8 still 'started' after 0s"
+expect wait-cmd-timeout 1 'command 8 still queued in sonarr; re-running is safe; raise WAIT_TIMEOUT \(seconds\) for large libraries'
+run_capture env STUB_RUNNING=sonarr STUB_FIXTURES="$T/cmdfx" "$T/libcall" 'wait_cmd sonarr "{\"id\":10}"'
+expect wait-cmd-cancelled 1 'command 10 cancelled'
+run_capture env STUB_RUNNING=sonarr STUB_FIXTURES="$T/cmdfx" "$T/libcall" 'wait_cmd sonarr "{\"id\":11}"'
+expect wait-cmd-orphaned 1 'command 11 orphaned'
 run_capture env STUB_RUNNING=sonarr "$T/libcall" 'wait_cmd sonarr "{}"'
 expect wait-cmd-noid 1 'command response has no id'
-ok "wait_cmd polls to completed, and dies on failed, timeout and a missing id"
+ok "wait_cmd polls to completed, and dies on failed/cancelled/orphaned, timeout and a missing id"
+
+# 2e. SABnzbd errors come back as HTTP 200 {"status":false,"error":...}.
+mkdir -p "$T/sabfx/sabnzbd"
+printf '{"status":false,"error":"Not implemented"}\n' \
+  > "$T/sabfx/sabnzbd/GET_api_mode_set_config_output_json_section_misc_keyword_x_value_y.json"
+printf '{"status":true}\n' > "$T/sabfx/sabnzbd/GET_api_mode_pause_output_json.json"
+cp "$FIX/initial/sabnzbd/GET_api_mode_get_config_output_json.json" "$T/sabfx/sabnzbd/"
+reset_stub
+run_capture env STUB_RUNNING=sabnzbd STUB_FIXTURES="$T/sabfx" "$T/libcall" \
+  'api sabnzbd GET "$(sab_path set_config section=misc keyword=x value=y)"'
+expect sab-error 1 '^GET sabnzbd /api\?mode=set_config&output=json&section=misc&keyword=x&value=y -> SAB error: Not implemented$'
+no_secrets sab-error "$OUT"
+run_capture env STUB_RUNNING=sabnzbd STUB_FIXTURES="$T/sabfx" "$T/libcall" \
+  'APPLY=1; arr_change sabnzbd GET "$(sab_path set_config section=misc keyword=x value=y)" || echo "rc=$?"'
+expect sab-error-change 0 'SAB error: Not implemented' '^rc=1$'
+refute sab-error-change '\[INFO\] GET sabnzbd'
+# Reads (full objects) and {"status":true} are not errors.
+run_capture env STUB_RUNNING=sabnzbd STUB_FIXTURES="$T/sabfx" "$T/libcall" \
+  'sab_api get_config | jq -e .config.misc >/dev/null; api sabnzbd GET "$(sab_path pause)"'
+expect sab-ok 0 '"status":true'
+# And in the wire script: the first failed set_config stops the run.
+use_fixtures initial
+printf '{"status":false,"error":"Not implemented"}\n' \
+  > "$T/fx/sabnzbd/GET_api_mode_set_config_output_json_section_misc_keyword_download_dir_value_%2Fdata%2Fusenet%2Fincomplete.json"
+run_capture env STUB_RUNNING="sabnzbd" "$WIRE" --only sab --apply
+expect sab-error-wire 1 'GET sabnzbd /api\?mode=set_config&output=json&section=misc&keyword=download_dir&value=%2Fdata%2Fusenet%2Fincomplete -> SAB error: Not implemented'
+refute sab-error-wire 'changes$'
+[[ "$(mutating | wc -l)" -eq 1 ]] || fail sab-error-wire "kept going after a SAB error: $(mutating)"
+no_secrets sab-error-wire "$OUT"
+ok "a SABnzbd HTTP 200 with status:false/error exits 1 (key-free); reads pass"
+
+# 2g. Temp files go in the caller's work dir $W (removed by its EXIT trap),
+# not $TMPDIR: an unusable TMPDIR does not matter when W is set.
+mkdir -p "$T/wdir"
+reset_stub
+run_capture env STUB_RUNNING=sonarr STUB_FIXTURES="$FIX/initial" TMPDIR="$T/no-such-tmp" "$T/libcall" \
+  'W="$1"; APPLY=1; api sonarr GET /api/v3/rootfolder >/dev/null; printf "{\"name\":\"RescanSeries\"}" >"$W/c.json"
+   arr_command sonarr "$W/c.json"; echo "[]" >"$W/rf.json"; ensure_root_folder sonarr /data/x "$W/rf.json"; rm "$W/c.json" "$W/rf.json"' "$T/wdir"
+expect tmp-in-w 0
+[[ -z "$(ls -A "$T/wdir")" ]] || fail tmp-in-w "temp files left in W: $(ls -A "$T/wdir")"
+ok "api/arr_command/ensure_root_folder temp files live in \$W"
+
+# 2f. A relative COMPOSE_FILE (from .env, loaded after arr.sh is sourced)
+# is made absolute under the repo, so scripts work from any dir.
+reset_stub
+rm -f "$T/bin/compose-env.log"
+run_capture env -u COMPOSE_FILE STUB_RUNNING=sonarr bash -c 'cd /tmp && "$1" "$2"' _ "$T/libcall" \
+  'export COMPOSE_FILE=compose.yaml:compose.lan.yaml; running_services; svc_ip sonarr'
+expect compose-file-lib 0 '^sonarr$' '^172\.30\.0\.12$'
+[[ "$(sort -u "$T/bin/compose-env.log")" == "COMPOSE_FILE=$REPO/compose.yaml:$REPO/compose.lan.yaml" ]] \
+  || fail compose-file-lib "COMPOSE_FILE not absolute: $(sort -u "$T/bin/compose-env.log")"
+use_fixtures converged
+rm -f "$T/bin/compose-env.log"
+run_capture env STUB_RUNNING="$ARR_UP" COMPOSE_FILE=compose.yaml:compose.lan.yaml bash -c 'cd /tmp && "$1"' _ "$REMAP"
+expect compose-file-script 0 '\[INFO\] no changes$'
+[[ -s "$T/bin/compose-env.log" ]] || fail compose-file-script "no compose call logged"
+[[ "$(sort -u "$T/bin/compose-env.log")" == "COMPOSE_FILE=$REPO/compose.yaml:$REPO/compose.lan.yaml" ]] \
+  || fail compose-file-script "COMPOSE_FILE not absolute: $(sort -u "$T/bin/compose-env.log")"
+ok "a relative COMPOSE_FILE is made absolute under the repo (run from /tmp)"
 
 # ==============================================================================
 # 3. Remap preconditions
@@ -343,6 +412,21 @@ run_capture env STUB_RUNNING="$ARR_UP" "$REMAP" --apply
 expect remap-no-field 1 'sonarr: config/mediamanagement has no boolean autoUnmonitorPreviouslyDownloadedEpisodes'
 [[ -z "$(mutating)" ]] || fail remap-no-field "changes made"
 ok "remap exits 1 and keeps the old root when items are left under it"
+
+# 6b. An item whose folder is not on the new pool: refused before any
+# change, in dry-run and with --apply, naming the folder.
+for mode in "" --apply; do
+  use_fixtures initial
+  jq '. + [{"id": 5, "title": "Show Gone", "path": "/data/shows/Show Gone"}]' \
+    "$FIX/initial/sonarr/GET_api_v3_series.json" > "$T/fx/sonarr/GET_api_v3_series.json"
+  run_capture env STUB_RUNNING="$ARR_UP" "$REMAP" ${mode:+"$mode"}
+  expect "remap-folder-missing${mode}" 1 \
+    "folder missing on the new pool; nothing changed: $T/data/media/tv/Show Gone\$"
+  [[ -z "$(mutating)" ]] || fail "remap-folder-missing${mode}" "changes made: $(mutating)"
+  ! grep -q 'series/editor' "$STUB_LOG" || fail "remap-folder-missing${mode}" "editor PUT sent"
+  refute "remap-folder-missing${mode}" '^DRY-RUN:'
+done
+ok "remap refuses (dry-run too) when an item's folder is missing on the new pool"
 
 # ==============================================================================
 # 7. Wire --only sab
@@ -440,8 +524,10 @@ for spec in "sonarr-4k tvCategory tv-4k" "radarr-4k movieCategory movies-4k" "li
     || fail wire-apply "$svc SAB client POST"
 done
 bodies "POST prowlarr /api/v1/downloadclient" | jq -e --arg k "$KEY" \
-  '(.fields | map({(.name): .value}) | add) as $f | $f.host == "sabnzbd" and $f.apiKey == $k and $f.category == "prowlarr"' >/dev/null \
-  || fail wire-apply "prowlarr SAB client POST"
+  '(.fields | map({(.name): .value}) | add) as $f | $f.host == "sabnzbd" and $f.apiKey == $k and $f.category == ""' >/dev/null \
+  || fail wire-apply "prowlarr SAB client POST (category must be empty)"
+# SAB never gets a "prowlarr" category (it keeps its 7: *, and the 6 TRaSH ones).
+! grep -q 'keyword=prowlarr' "$STUB_LOG" || fail wire-apply "a prowlarr SAB category was created"
 # Root folders from the wiring table.
 [[ "$(bodies "POST radarr /api/v3/rootfolder" | jq -r .path | paste -sd' ')" == "/data/media/movies /data/media/anime-movies" ]] \
   || fail wire-apply "radarr root folders"
@@ -497,6 +583,18 @@ bodies "POST prowlarr /api/v1/applications" | jq -se '
   || fail wire-app-match "app POSTs (Sonarr Anime must get animeSyncCategories [5070])"
 ok "Prowlarr apps match by baseUrl host, then name; stale hosts are never reused"
 
+# 8c. An existing Prowlarr SAB client with the schema's "prowlarr" category
+# is PUT with an empty one (category is compared).
+use_fixtures converged
+jq 'map(.fields |= map(if .name == "category" then .value = "prowlarr" else . end))' \
+  "$FIX/converged/prowlarr/GET_api_v1_downloadclient.json" > "$T/fx/prowlarr/GET_api_v1_downloadclient.json"
+cp "$FIX/initial/prowlarr/POST_api_v1_command.json" "$T/fx/prowlarr/"
+run_capture env STUB_RUNNING="$CORE_UP" "$WIRE" --apply
+expect wire-prowlarr-category 0
+bodies "PUT prowlarr /api/v1/downloadclient/3" | jq -e '.id == 3 and ((.fields | map({(.name): .value}) | add).category == "")' >/dev/null \
+  || fail wire-prowlarr-category "Prowlarr SAB client not PUT with an empty category"
+ok "an existing Prowlarr SAB client with category \"prowlarr\" is fixed to an empty category"
+
 # ==============================================================================
 # 9. Idempotency on converged fixtures (masked ******** everywhere)
 # ==============================================================================
@@ -545,6 +643,10 @@ run_capture "$WIRE" --help
 expect cli-help 0 'Usage: 25-arr-wire.sh'
 run_capture env LAN_IP=not-an-ip STUB_RUNNING=sabnzbd "$WIRE" --only sab
 expect cli-lan-ip 1 "invalid LAN_IP"
-ok "unknown flags exit 2, --help exits 0, a bad LAN_IP exits 1"
+for ip in 0.0.0.0 255.255.255.255; do
+  run_capture env LAN_IP="$ip" STUB_RUNNING=sabnzbd "$WIRE" --only sab
+  expect cli-lan-ip-reserved 1 "LAN_IP must be the VM's own LAN address"
+done
+ok "unknown flags exit 2, --help exits 0, a bad or 0.0.0.0/255.255.255.255 LAN_IP exits 1"
 
 printf 'all arr script tests passed\n'

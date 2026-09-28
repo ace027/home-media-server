@@ -39,6 +39,8 @@ docker:
                                               (or STUB_EXEC_OUT) and exits with
                                               STUB_EXEC_RC_<svc_> (or STUB_EXEC_RC, 0)
   anything else                               exit 0
+  Every compose call also appends "COMPOSE_FILE=<its value>" to
+  <dir>/compose-env.log.
 
 curl: reads url/header/request lines from a -K config (stdin with -K -),
 plus -X, -H, --data-binary @f, -o, -w and a positional URL. Maps the IP (or
@@ -174,6 +176,8 @@ case "${1:-}" in
     ;;
   compose)
     shift
+    # The COMPOSE_FILE each compose call saw (checks that it is absolute).
+    printf 'COMPOSE_FILE=%s\n' "${COMPOSE_FILE-}" >> "$_STUB_HOME/compose-env.log"
     # Global options before the subcommand.
     while [[ $# -gt 0 ]]; do
       case "$1" in

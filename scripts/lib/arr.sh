@@ -27,7 +27,34 @@ if ! declare -F log_info >/dev/null; then
   return 1
 fi
 
-DC=(docker compose --project-directory "$REPO_ROOT")
+# arr_dc <compose args...>: docker compose for this repo. Compose resolves
+# relative COMPOSE_FILE entries (compose.yaml:compose.lan.yaml, from .env)
+# against the current dir, not --project-directory, so they are made
+# absolute under $REPO_ROOT and re-exported. Done on every call, because
+# load_env runs after this file is sourced.
+arr_dc() {
+  if [[ -n "${COMPOSE_FILE:-}" ]]; then
+    local sep="${COMPOSE_PATH_SEPARATOR:-:}" f parts=() abs=()
+    IFS="$sep" read -r -a parts <<<"$COMPOSE_FILE"
+    for f in "${parts[@]}"; do
+      [[ -n "$f" ]] || continue
+      [[ "$f" == /* ]] || f="$REPO_ROOT/$f"
+      abs+=("$f")
+    done
+    COMPOSE_FILE="$(IFS="$sep"; printf '%s' "${abs[*]}")"
+    export COMPOSE_FILE
+  fi
+  docker compose --project-directory "$REPO_ROOT" "$@"
+}
+DC=(arr_dc)
+
+# arr_tmp: a temp file in the caller's work dir $W when there is one (so its
+# EXIT trap removes it), else in $TMPDIR or /tmp.
+arr_tmp() {
+  local d="${W:-${TMPDIR:-/tmp}}"
+  [[ -d "$d" ]] || d="${TMPDIR:-/tmp}"
+  mktemp -p "$d"
+}
 
 # Number of mutating calls made (or printed, in dry-run) by arr_mutate.
 count_mutations=0
@@ -120,6 +147,8 @@ svc_key() {
 # on stdin; argv holds only the method, the options and the body file name.
 # Non-2xx: prints "<METHOD> <svc> <path> -> HTTP <code>" to stderr and
 # returns 1. curl's exit 22 (--fail-with-body on >=400) is captured, not fatal.
+# SABnzbd reports API errors as HTTP 200 with {"status":false,"error":"..."}:
+# that prints "<METHOD> sabnzbd <path> -> SAB error: <msg>" and returns 1.
 api() {
   local svc="$1" method="$2" path="$3" body="${4:-}"
   local ip port key tmp code rc=0 url
@@ -136,7 +165,7 @@ api() {
   port="$(arr_port "$svc")" || return 1
   key="$(svc_key "$svc")" || return 1
   url="http://$ip:$port$path"
-  tmp="$(mktemp)" || return 1
+  tmp="$(arr_tmp)" || return 1
 
   local args=(-sS --fail-with-body --max-time 30 -X "$method" -K - -o "$tmp" -w '%{http_code}')
   if [[ -n "$body" ]]; then
@@ -170,6 +199,18 @@ api() {
   )" || rc=$?
 
   if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+    if [[ "$svc" == sabnzbd ]]; then
+      # Only a top-level status:false or error marks a failure; get_config,
+      # queue and history return {"config"|"queue"|"history": {...}}.
+      local msg
+      msg="$(jq -r 'if type == "object" and (.status == false or (.error // null) != null)
+                    then (.error // "status false") | tostring else empty end' "$tmp" 2>/dev/null)" || msg=""
+      if [[ -n "$msg" ]]; then
+        rm -f "$tmp"
+        printf '%s %s %s -> SAB error: %s\n' "$method" "$svc" "$path" "${msg//"$key"/***}" >&2
+        return 1
+      fi
+    fi
     cat "$tmp"
     rm -f "$tmp"
     return 0
@@ -220,8 +261,8 @@ sab_api() {
 
 # wait_cmd <svc> <command-json-response>: polls GET {base}/command/<id>
 # every WAIT_INTERVAL seconds (default 3) until the status is completed
-# (return 0), failed/aborted (die), or WAIT_TIMEOUT seconds (default 600)
-# have passed (die).
+# (return 0), failed/aborted/cancelled/orphaned (die), or WAIT_TIMEOUT
+# seconds (default 600) have passed (die).
 wait_cmd() {
   local svc="$1" resp="$2" id base out status start
   local interval="${WAIT_INTERVAL:-3}" timeout="${WAIT_TIMEOUT:-600}"
@@ -234,10 +275,10 @@ wait_cmd() {
     status="$(jq -r '.status // empty' <<<"$out" 2>/dev/null)" || status=""
     case "$status" in
       completed) return 0 ;;
-      failed|aborted) die "$svc: command $id $status" ;;
+      failed|aborted|cancelled|orphaned) die "$svc: command $id $status" ;;
     esac
     if (( SECONDS - start >= timeout )); then
-      die "$svc: command $id still '${status:-unknown}' after ${timeout}s"
+      die "command $id still queued in $svc; re-running is safe; raise WAIT_TIMEOUT (seconds) for large libraries (status '${status:-unknown}' after ${timeout}s)"
     fi
     sleep "$interval"
   done
@@ -295,7 +336,7 @@ arr_change() {
 arr_command() {
   local svc="$1" body="$2" base out rc=0
   base="$(arr_base "$svc")" || return 1
-  out="$(mktemp)" || return 1
+  out="$(arr_tmp)" || return 1
   arr_mutate "$svc" POST "$base/command" "$body" >"$out" || rc=$?
   if [[ $rc -eq 0 ]]; then
     if [[ "${APPLY:-0}" -eq 1 ]]; then
@@ -314,13 +355,13 @@ arr_command() {
 # Returns 0 if the two provider resources (download client, application)
 # match on the keys that matter: the top-level enable, implementation, name
 # and syncLevel, and the field values of host, port, useSsl, baseUrl,
-# prowlarrUrl, the category fields, syncCategories and animeSyncCategories.
+# prowlarrUrl, the category fields (Prowlarr's is "category"), syncCategories and animeSyncCategories.
 # A field that either side masks as "********", or whose privacy is not
 # "normal", is ignored, so a second --apply makes 0 mutations on real apps.
 same_state() {
   jq -e -n --slurpfile d "$1" --slurpfile c "$2" '
     def compared: ["host", "port", "useSsl", "baseUrl", "prowlarrUrl",
-                   "tvCategory", "movieCategory", "musicCategory",
+                   "category", "tvCategory", "movieCategory", "musicCategory",
                    "syncCategories", "animeSyncCategories"];
     def hidden: [(.fields // [])[]
                  | select(.value == "********" or ((.privacy // "normal") != "normal"))
@@ -366,7 +407,7 @@ ensure_root_folder() {
     return 0
   fi
   base="$(arr_base "$svc")" || return 1
-  body="$(mktemp)" || return 1
+  body="$(arr_tmp)" || return 1
   if [[ "$svc" == lidarr ]]; then
     out="$(api "$svc" GET "$base/qualityprofile")" || { rm -f "$body"; return 1; }
     qp="$(jq -r '[.[]? | objects | .id | numbers] | min // empty' <<<"$out")" || qp=""

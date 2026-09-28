@@ -39,8 +39,11 @@ Per instance, in order:
 
 Refuses (exit 1) while sabnzbd or prowlarr is running (no grabs while paths
 are in flux), unless sonarr, sonarr-anime, radarr and lidarr are running
-and healthy, or if a new root dir is missing under \$DATA_ROOT. A re-run
-makes no changes and prints "no changes".
+and healthy, if a new root dir is missing under \$DATA_ROOT, or if any item
+to move has no folder at <new root>/<folder name> under \$DATA_ROOT (a
+rescan would drop its files while it stays monitored). These checks run
+before any change, in dry-run too. A re-run makes no changes and prints
+"no changes".
 
 Dry-run by default: reads the apps and prints each change as
 "DRY-RUN: <METHOD> <svc> <path> <body>" (secrets shown as ***). Pass
@@ -83,19 +86,40 @@ W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 
 declare -A MOVED=()
+declare -A KIND=([sonarr]=series [sonarr-anime]=series [radarr]=movie)
+
+# --- every item to move must already have its folder on the new pool ----------
+# The rescan after the editor call drops the file records of an item whose
+# folder is missing, while the item stays monitored: that means re-downloads.
+# Checked for all instances before any change (also in dry-run); the item
+# lists read here are reused by step 3.
+missing=()
+for svc in "${REMAP_SVCS[@]}"; do
+  api "$svc" GET "$(arr_base "$svc")/${KIND[$svc]}" >"$W/$svc-items.json"
+  mapfile -d '' -t names < <(jq -j --arg o "${OLD[$svc]}/" '
+    .[]? | objects | (.path // "") | select(startswith($o))
+    | sub("/+$"; "") | split("/") | last | ., "\u0000"' "$W/$svc-items.json")
+  for name in "${names[@]}"; do
+    dir="$(on_disk "${NEW[$svc]}/$name")"
+    [[ -n "$name" && -d "$dir" ]] || missing+=("$dir")
+  done
+done
+if [[ ${#missing[@]} -gt 0 ]]; then
+  die "folder missing on the new pool; nothing changed: $(printf '%s, ' "${missing[@]}" | sed 's/, $//')"
+fi
 
 # remap_instance <svc>
 remap_instance() {
-  local svc="$1" old="${OLD[$1]}" new="${NEW[$1]}" base kind ids_key field rescan
+  local svc="$1" old="${OLD[$1]}" new="${NEW[$1]}" base kind="${KIND[$1]}" ids_key field rescan
   local mm_id ids n left old_id
   base="$(arr_base "$svc")"
   case "$svc" in
     sonarr|sonarr-anime)
-      kind=series ids_key=seriesIds rescan=RescanSeries
+      ids_key=seriesIds rescan=RescanSeries
       field=autoUnmonitorPreviouslyDownloadedEpisodes
       ;;
     radarr)
-      kind=movie ids_key=movieIds rescan=RescanMovie
+      ids_key=movieIds rescan=RescanMovie
       field=autoUnmonitorPreviouslyDownloadedMovies
       ;;
   esac
@@ -120,9 +144,9 @@ remap_instance() {
   api "$svc" GET "$base/rootfolder" >"$W/rf.json"
   ensure_root_folder "$svc" "$new" "$W/rf.json"
 
-  # 3. Items under the old root -> new root, DB paths only.
-  api "$svc" GET "$base/$kind" >"$W/items.json"
-  ids="$(jq -c --arg o "$old/" '[.[]? | objects | select((.path // "") | startswith($o)) | .id]' "$W/items.json")"
+  # 3. Items under the old root -> new root, DB paths only (the list read
+  #    by the folder check).
+  ids="$(jq -c --arg o "$old/" '[.[]? | objects | select((.path // "") | startswith($o)) | .id]' "$W/$svc-items.json")"
   n="$(jq 'length' <<<"$ids")"
   if (( n > 0 )); then
     jq -n --arg k "$ids_key" --argjson ids "$ids" --arg r "$new" \
