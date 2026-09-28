@@ -1,4 +1,4 @@
-# Media stack — services added in Phase 2 (plex, jellyfin, seerr, tautulli)
+# Media stack — services added in Phase 2 (plex, seerr, tautulli; jellyfin behind the optional `jellyfin` profile)
 # New services: extends: {file: _common.yaml, service: base} and pin image tags (never :latest).
 services: {}
 networks:

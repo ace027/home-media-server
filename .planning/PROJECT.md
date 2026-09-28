@@ -1,14 +1,14 @@
 # home-media-server
 
 ## What This Is
-This is a GitOps Docker Compose repository for a home media platform on Proxmox. It covers a complete Usenet ARR stack, with Plex as the primary server and Jellyfin as a backup. Traefik and Authentik handle public access, Twingate provides the only way into the admin tools, DDNS tracks the dynamic IP, and FileFlows converts the library to AV1 on an Intel Arc A380. Everything is reproducible from this repo except secrets.
+This is a GitOps Docker Compose repository for a home media platform on Proxmox. It covers a complete Usenet ARR stack, with Plex as the media server (Jellyfin runs only as an optional side-by-side evaluation). Traefik and Authentik handle public access, Twingate provides the only way into the admin tools, DDNS tracks the dynamic IP, and FileFlows converts the library to AV1 on an Intel Arc A380. Everything is reproducible from this repo except secrets.
 
 ## Core Value
 Family members request a title in one place, it appears automatically at the right quality, and they can watch it anywhere without help. The owner gets private admin access, SSO, AV1 space savings, and monitoring and backups from day one, all managed through git.
 
 ## Who It's For
 - **Owner/admin:** runs the Proxmox host and manages everything over Twingate.
-- **Family (1-5 users):** watch on AV1-capable TVs (Google TV Streamer or equivalent), phones and browsers, at home and remotely, via Plex (primary) or Jellyfin (backup), and request titles through Seerr.
+- **Family (1-5 users):** watch on AV1-capable TVs (Google TV Streamer or equivalent), phones and browsers, at home and remotely, via Plex, and request titles through Seerr.
 
 ## Requirements
 
@@ -17,15 +17,15 @@ Family members request a title in one place, it appears automatically at the rig
 
 ### Active
 - [ ] **R1 Repo foundation:** `compose.yaml` using `include:` with stacks/{edge,media,arr,download,transcode,ops}.yaml, `.env.example`, gitignored `secrets/`, pinned image tags, `scripts/mkdirs.sh`, and a docs skeleton.
-- [ ] **R2 Host & VM:** ZFS datasets (`tank/data` with recordsize=1M, `tank/backups`), IOMMU/vfio, a Debian 13 VM (q35/OVMF) with appdata on SSD, Arc A380 passthrough with ReBAR (`vainfo` OK), `/data` mounted via virtiofs, Docker Engine and the Compose plugin. Delivered as a runbook plus scripts.
+- [ ] **R2 Host & VM:** ZFS datasets (`tank/data` with recordsize=1M, `tank/backups`), IOMMU/vfio, a Debian 13 VM (q35/OVMF) with appdata on SSD, Arc A380 passthrough (ReBAR where the platform supports it; `vainfo` OK), `/data` mounted via virtiofs, Docker Engine and the Compose plugin. Delivered as a runbook plus scripts.
 - [ ] **R3 Download:** SABnzbd with categories tv, tv-4k, movies, movies-4k, music, anime, following the TRaSH single `/data` layout.
 - [ ] **R4 Arr:** Prowlarr syncing to Sonarr, **Sonarr-Anime**, Sonarr-4K, Radarr, Radarr-4K and Lidarr. Anime series use the dedicated Sonarr-Anime instance (migrated from the old `animesonarr`), and anime movies use the `anime-movies` root folder in the main Radarr. Imports are hardlinks or atomic moves.
-- [ ] **R5 Media:** Plex (Plex Pass, QSV hardware transcoding, remote access on 32400, remote quality set to Original with an overall cap of about 400 Mbps), Jellyfin (QSV, same libraries), Seerr (Plex login; 4K requests go to the 4K instances and need admin approval), Tautulli.
-- [ ] **R6 Edge:** Traefik v3 with wildcard certificates via Cloudflare DNS-01, `cloudflare-ddns` for the dynamic IP (DNS-only records), Authentik (invites, admin MFA, OIDC for Jellyfin), CrowdSec bouncer, geo-block, secure headers. Only ports 443 and 32400 are forwarded.
+- [ ] **R5 Media:** Plex (Plex Pass, QSV hardware transcoding, remote access on 32400, remote quality set to Original with an overall cap of about 400 Mbps), Jellyfin as an **optional evaluation** only (QSV, same libraries read-only, off by default behind a Compose profile, started on demand to test whether it could replace Plex), Seerr (Plex login; 4K requests go to the 4K instances and need admin approval), Tautulli.
+- [ ] **R6 Edge:** Traefik v3 with wildcard certificates via Cloudflare DNS-01, `cloudflare-ddns` for the dynamic IP (DNS-only records), Authentik (invites, admin MFA; OIDC and a public route for Jellyfin only if it is adopted after evaluation), CrowdSec bouncer, geo-block, secure headers. Only ports 443 and 32400 are forwarded.
 - [ ] **R7 Private admin:** Twingate connector in a **separate LXC**, reusing the existing Twingate network. Admin UIs live under `*.int.<domain>` behind the `lan-only` ipAllowList plus Authentik forward-auth.
 - [ ] **R8 AV1 transcode:** FileFlows server and GPU node, QSV AV1, running 01:00-07:00 with 1 runner, covering all libraries including 4K.
   - 4K is 10-bit and keeps HDR10. Dolby Vision profile 7/8 files lose the DV layer; profile 5 files are skipped.
-  - A converted file is kept only if it's at least 15-20% smaller, and each replacement triggers a rescan in the *arr apps, Plex and Jellyfin.
+  - A converted file is kept only if it's at least 15-20% smaller, and each replacement triggers a rescan in the *arr apps and Plex (and Jellyfin when it is running).
 - [ ] **R9 Quality automation:** Recyclarr (TRaSH HD, 4K and anime profiles; AV1 and DV custom-format scores set to 0; DV without HDR10 fallback blocked), Bazarr (HD), Maintainerr (dry-run first).
 - [ ] **R10 Monitoring & alerts:** Homepage, Uptime Kuma, Notifiarr/Discord webhooks, Dozzle, Diun update notifications.
 - [ ] **R11 Backups:** nightly vzdump to Proxmox Backup Server (PBS), Backrest/restic of appdata off-site, sanoid snapshots of `tank/data`, ZFS scrub and SMART alerts, and a documented restore drill that has actually been run.
@@ -46,7 +46,8 @@ Family members request a title in one place, it appears automatically at the rig
 - Dynamic public IP, so DDNS is required. Not behind CGNAT. 1 Gbps symmetrical fiber.
 - Only ports 443 and 32400 are forwarded. No Cloudflare proxy (orange cloud) on media hostnames.
 - Secrets are never committed; image tags are pinned, never `latest`.
-- A single Proxmox VM holds the whole stack. One Arc A380 is shared by Plex, Jellyfin and FileFlows.
+- A single Proxmox VM holds the whole stack. One Arc A380 is shared by Plex, FileFlows and (when running) Jellyfin.
+- Host hardware (confirmed 2026-09-28): Dell desktop, Intel Skylake CPU (8 threads) with HD 530 iGPU as the host console, 16 GB DDR4 (2×8 GB, 2 slots free, board max 64 GB), Proxmox VE 9.2 on ext4/LVM with GRUB (`local-lvm` for VM disks). No Resizable BAR or Above 4G Decoding option in the BIOS, so the A380 runs with a 256 MB BAR (fine for QSV/AV1 media work). VM 200 is sized 6 cores / 10 GB and the ZFS ARC is capped at 2 GB; a RAM upgrade to 32 GB is optional.
 - appdata stays on the VM's SSD, never on network or ZFS media storage (the apps use SQLite).
 - Physical, router, Proxmox-host and third-party account steps (Cloudflare, Twingate, Plex, Usenet providers and indexers) are carried out by the owner. The repo provides runbooks, scripts and config for them.
 
@@ -61,10 +62,11 @@ Family members request a title in one place, it appears automatically at the rig
 | Storage | Host-managed ZFS, hardlink-safe | `tank/data` via virtiofs as `/data` |
 | Downloads | Simplicity; no VPN needed | Usenet only (SABnzbd) |
 | Proxy/SSO | Label-driven infrastructure as code; family user management | Traefik v3 + Authentik |
-| Remote access | Easy for family, admin tools stay private | Hybrid: Plex direct, Jellyfin/Seerr via Traefik, admin via Twingate |
+| Remote access | Easy for family, admin tools stay private | Hybrid: Plex direct, Seerr via Traefik, admin via Twingate (Jellyfin via Traefik only if adopted) |
 | DNS | Dynamic IP; ToS-safe for media | Cloudflare DNS-only + cloudflare-ddns |
 | Request app | Overseerr and Jellyseerr merged in 2026 | Seerr |
-| Primary server | Owner's Plex Pass covers family remote streaming | Plex primary, Jellyfin backup |
+| Primary server | Owner's Plex Pass covers family remote streaming | Plex |
+| Jellyfin | Owner wants to evaluate it as a possible Plex replacement, not run it as a standing backup (decided 2026-09-28) | Optional evaluation: off by default (Compose profile `jellyfin`), same read-only libraries + QSV; Authentik OIDC, public route and family docs only if adopted |
 | 4K/anime | Keep family on appropriate quality; keep the existing anime instance's history | Separate 4K instances; a dedicated Sonarr-Anime instance (migrated); anime movies via a root folder in Radarr |
 | Old stack migration | Old server ran qBittorrent+gluetun+flaresolverr, NZBGet, a separate animesonarr, and a Twingate connector | Usenet only (retire torrents and NZBGet); keep a separate anime Sonarr; Twingate connector moves to a separate LXC. See `.planning/migration/old-stack-inventory.md` |
 | AV1 | Save space; family devices support AV1 | FileFlows on all libraries including 4K; HDR10 kept, DV dropped |
@@ -76,9 +78,9 @@ Family members request a title in one place, it appears automatically at the rig
 ## Architecture Influences
 - Compose `include:` joins the domain stack files. Only Traefik (443) and Plex (32400) publish ports. Internal routers carry the `lan-only` middleware plus Authentik forward-auth.
 - TRaSH single-mount `/data/{usenet,media}` layout, PUID/PGID 1000, umask 002. Plex and Jellyfin get `/data/media` read-only.
-- `/dev/dri` is shared by Plex, Jellyfin and FileFlows; FileFlows only runs off-peak.
+- `/dev/dri` is shared by Plex, FileFlows and (when running) Jellyfin; FileFlows only runs off-peak.
 - Recyclarr profiles must neutralize the AV1 and DV custom formats to prevent *arr upgrade loops after FileFlows replaces a file.
 - Recovery stack: Proxmox snapshots, then PBS, then restic of appdata; git revert handles config.
 
 ---
-*Last updated: 2026-09-23 after initialization*
+*Last updated: 2026-09-28 (Jellyfin made an optional evaluation; host hardware recorded)*
