@@ -306,12 +306,18 @@ MAN="$(newest .manifest.tsv)"
 [[ "$(head -n 1 "$MAN")" == $'kind\tinstance\tid\ttitle\tsrc\tdst\tfiles\taction\tnew_id\tprior' ]] \
   || fail split-apply "manifest header"
 # prior: the HD monitored state before the split (13 was unmonitored;
-# UHD Show's season 0 was unmonitored).
+# UHD Show's season 0 was unmonitored, and episode 1002 of the monitored
+# season 1), read before the mv.
 [[ "$(tail -n +2 "$MAN" | cut -f1-3,7-10 | tr '\t' ' ')" == 'movie radarr 11 1 move 31 {"m":true}
 movie radarr 13 1 move 32 {"m":false}
-series sonarr 1 2 move 41 {"m":true,"s":{"0":false,"1":true,"2":true}}' ]] || fail split-apply "manifest rows:"$'\n'"$(cat "$MAN")"
+series sonarr 1 2 move 41 {"m":true,"s":{"0":false,"1":true,"2":true},"e":[1002]}' ]] || fail split-apply "manifest rows:"$'\n'"$(cat "$MAN")"
+[[ "$(grep -nE '^GET sonarr /api/v3/episode\?seriesId=1$|^PUT sonarr /api/v3/series/1 ' "$STUB_LOG" | cut -d: -f2 | cut -c1-24)" \
+  == $'GET sonarr /api/v3/episo\nPUT sonarr /api/v3/serie' ]] || fail split-apply "episode list not read before the HD PUT"
+# The new_id rewrite leaves no temp file behind; the manifest stays mode 600.
+[[ -z "$(find "$APPDATA_ROOT/.migration" -name '.split-4k-manifest.*')" ]] || fail split-apply "manifest temp file left"
+[[ "$(stat -c %a "$MAN")" == 600 ]] || fail split-apply "manifest mode is not 600"
 no_secrets split-apply "$OUT"
-ok "split --apply: moved on disk, add+rescan in 4K (HD seasonFolder), unmonitor+tag+rescan in HD (per row, in order), manifest with new ids and prior"
+ok "split --apply: moved on disk, add+rescan in 4K (HD seasonFolder), unmonitor+tag+rescan in HD (per row, in order), manifest with new ids and prior (unmonitored episodes in e)"
 
 # --- 5. undo --------------------------------------------------------------------
 # post_split_fixtures: HD as the apply left it (unmonitored, every season
@@ -339,6 +345,7 @@ done
 got="$(seq_of '^(DELETE|PUT) ')"
 want="DELETE sonarr-4k /api/v3/series/41?deleteFiles=false
 PUT sonarr /api/v3/series/1
+PUT sonarr /api/v3/episode/monitor
 DELETE radarr-4k /api/v3/movie/32?deleteFiles=false
 PUT radarr /api/v3/movie/13
 DELETE radarr-4k /api/v3/movie/31?deleteFiles=false
@@ -354,6 +361,13 @@ bodies "PUT radarr /api/v3/movie/13" | jq -e '.monitored == false and .tags == [
 bodies "PUT radarr /api/v3/movie/11" | jq -e '.monitored == true and .tags == []' >/dev/null \
   || fail split-undo "radarr movie 11 not re-monitored without the tag"
 refute split-undo '\[WARN\]'
+# Sonarr re-monitors every episode of season 1 on that PUT; episode 1002,
+# unmonitored before the split, is unmonitored again.
+bodies "PUT sonarr /api/v3/episode/monitor" | jq -se '. == [{episodeIds: [1002], monitored: false}]' >/dev/null \
+  || fail split-undo "episode 1002 not unmonitored again after the HD PUT"
+expect split-undo 0 '\[INFO\] PUT sonarr /api/v3/episode/monitor$'
+# The HD state a clean undo leaves (compared with a resumed undo in 5c).
+CLEAN_UNDO="$(grep -E '^(PUT|DELETE) ' "$STUB_LOG")"
 bodies "POST sonarr /api/v3/command" | jq -e '.name == "RescanSeries" and .seriesId == 1' >/dev/null || fail split-undo "HD not rescanned"
 [[ -f "$MAN.undone" && ! -e "$MAN" ]] || fail split-undo "manifest not renamed to .undone"
 # A second undo of the same (now renamed) manifest is refused.
@@ -396,7 +410,7 @@ run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --apply
 MAN="$(newest .manifest.tsv)"
 expect split-partial 1 'GET sonarr-4k /api/v3/series/lookup\?term=tvdb%3A2001 -> HTTP 500' \
   "\[ERROR\] row 3 partially applied; run --undo $MAN$"
-[[ "$(tail -n 1 "$MAN" | cut -f2,3,9,10)" == $'sonarr\t1\t-\t{"m":true,"s":{"0":false,"1":true,"2":true}}' ]] \
+[[ "$(tail -n 1 "$MAN" | cut -f2,3,9,10)" == $'sonarr\t1\t-\t{"m":true,"s":{"0":false,"1":true,"2":true},"e":[1002]}' ]] \
   || fail split-partial "partial row not in the manifest with new_id - and its prior"
 ! grep -q '^PUT sonarr ' "$STUB_LOG" || fail split-partial "HD series changed after a failed add"
 reset_stub
@@ -406,6 +420,102 @@ expect split-partial-undo 0 '\[INFO\] undone: 3 rows'
 ! grep -q '^DELETE sonarr-4k ' "$STUB_LOG" || fail split-partial-undo "DELETE for a row that was never added"
 [[ "$(grep -c '^DELETE radarr-4k ' "$STUB_LOG")" -eq 2 ]] || fail split-partial-undo "movie rows not deleted from radarr-4k"
 ok "a failure after a row's mv names the row and the manifest; --undo --apply reverses the partial row too"
+
+# --- 5c. an undo that stops mid-way can be re-run -------------------------------
+make_library
+split_fixtures
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --apply
+expect split-undo-resume 0 '\[INFO\] split: 3 titles moved'
+MAN="$(newest .manifest.tsv)"
+# Undo runs rows 3, 2, 1; row 2's DELETE fails after its folder moved back.
+reset_stub
+post_split_fixtures
+printf '500\n' > "$T/fx/radarr-4k/DELETE_api_v3_movie_32_deleteFiles_false.http"
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
+expect split-undo-resume 1 'DELETE radarr-4k /api/v3/movie/32\?deleteFiles=false -> HTTP 500' \
+  "\[ERROR\] undo stopped at row 2; re-run the same --undo command to continue$"
+[[ -f "$MAN" && ! -e "$MAN.undone" ]] || fail split-undo-resume "manifest renamed although a row failed"
+[[ -d "$DATA_ROOT/media/movies/Unmonitored 4K Movie (2017)" && ! -e "$DATA_ROOT/media/movies-4k/Unmonitored 4K Movie (2017)" \
+  && -d "$DATA_ROOT/media/movies-4k/Big 4K Movie (2019)" ]] || fail split-undo-resume "row 2 not moved back or row 1 touched"
+FIRST_LOG="$(cat "$STUB_LOG")"
+# The re-run: row 3 (fully undone) and row 2 (moved back) are resumed:
+# no mv; row 3's 4K series is gone (404 counts as done), row 2's DELETE
+# now works; their HD PUTs and rescans are sent again.
+rm -f "$T/fx/radarr-4k/DELETE_api_v3_movie_32_deleteFiles_false.http"
+printf '404\n' > "$T/fx/sonarr-4k/DELETE_api_v3_series_41_deleteFiles_false.http"
+reset_stub
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
+expect split-undo-resume 0 '\[INFO\] undone: 3 rows' \
+  '\[INFO\] row 3: /data/media/tv-4k/UHD Show is gone and /data/media/tv/UHD Show exists \(moved back by an earlier undo\); not moving it$' \
+  '\[INFO\] row 2: /data/media/movies-4k/Unmonitored 4K Movie \(2017\) is gone and .* not moving it$' \
+  '\[INFO\] DELETE sonarr-4k /api/v3/series/41\?deleteFiles=false: already deleted \(HTTP 404\)$' \
+  '\[INFO\] DELETE radarr-4k /api/v3/movie/32\?deleteFiles=false$'
+refute split-undo-resume 'row 1: .*not moving it'
+for m in "Big 4K Movie (2019)" "Unmonitored 4K Movie (2017)"; do
+  [[ -f "$DATA_ROOT/media/movies/$m/movie.mkv" && ! -e "$DATA_ROOT/media/movies-4k/$m" ]] || fail split-undo-resume "$m not moved back"
+done
+[[ -f "$DATA_ROOT/media/tv/UHD Show/Season 01/e01.mkv" && ! -e "$DATA_ROOT/media/tv-4k/UHD Show" ]] || fail split-undo-resume "UHD Show not moved back"
+[[ -f "$MAN.undone" && ! -e "$MAN" ]] || fail split-undo-resume "manifest not renamed to .undone"
+# Final state = a clean undo: the re-run sends the same DELETE/PUT requests
+# (same bodies, same order) as the clean undo in case 5, and every 4K item
+# was deleted (41 in the first run, 32 and 31 in the re-run).
+[[ "$(grep -E '^(PUT|DELETE) ' "$STUB_LOG")" == "$CLEAN_UNDO" ]] \
+  || fail split-undo-resume "re-run requests differ from a clean undo:"$'\n'"$(grep -E '^(PUT|DELETE) ' "$STUB_LOG")"
+grep -qx 'DELETE sonarr-4k /api/v3/series/41?deleteFiles=false' <<<"$FIRST_LOG" || fail split-undo-resume "series 41 not deleted in the first run"
+no_secrets split-undo-resume "$OUT"
+ok "an undo that stops at a row (exit 1, re-run hint) re-runs to the clean-undo state: no second mv, 404 on DELETE counts as done"
+
+# --- 5d. an empty src recreated by an HD rescan does not block undo -------------
+make_library
+split_fixtures
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --apply
+MAN="$(newest .manifest.tsv)"
+reset_stub
+post_split_fixtures
+# A file in the recreated src: refused, nothing moved.
+mkdir -p "$DATA_ROOT/media/tv/UHD Show"
+printf 'x\n' > "$DATA_ROOT/media/tv/UHD Show/new.nfo"
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
+expect split-undo-emptysrc 1 \
+  '\[ERROR\] undo preflight: series sonarr 1 UHD Show: /data/media/tv/UHD Show already exists and is not an empty directory' \
+  'undo preflight failed for 1 of 3 rows; nothing moved'
+refute split-undo-emptysrc 'undo stopped at row'
+[[ -z "$(mutating)" && -d "$DATA_ROOT/media/tv-4k/UHD Show" && -f "$MAN" ]] || fail split-undo-emptysrc "changes despite a non-empty src"
+# The same src, empty (as createEmptySeriesFolders leaves it): removed, then undone.
+rm "$DATA_ROOT/media/tv/UHD Show/new.nfo"
+mkdir -p "$DATA_ROOT/media/movies/Big 4K Movie (2019)"
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN"
+expect split-undo-emptysrc 0 "^DRY-RUN: rmdir -- '$DATA_ROOT/media/tv/UHD Show'$" \
+  '\[INFO\] row 3: removing the empty /data/media/tv/UHD Show \(recreated by an HD rescan\)$'
+[[ -d "$DATA_ROOT/media/tv/UHD Show" && -z "$(mutating)" ]] || fail split-undo-emptysrc "dry-run changed something"
+reset_stub
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
+expect split-undo-emptysrc 0 '\[INFO\] undone: 3 rows' '\[INFO\] row 1: removing the empty /data/media/movies/Big 4K Movie \(2019\)'
+[[ -f "$DATA_ROOT/media/tv/UHD Show/Season 01/e01.mkv" && ! -e "$DATA_ROOT/media/tv-4k/UHD Show" ]] || fail split-undo-emptysrc "UHD Show not moved back"
+[[ -f "$DATA_ROOT/media/movies/Big 4K Movie (2019)/movie.mkv" && ! -e "$DATA_ROOT/media/movies/Big 4K Movie (2019)/Big 4K Movie (2019)" ]] \
+  || fail split-undo-emptysrc "Big 4K Movie not moved back in place"
+[[ "$(grep -E '^(PUT|DELETE) ' "$STUB_LOG")" == "$CLEAN_UNDO" ]] || fail split-undo-emptysrc "requests differ from a clean undo"
+ok "undo removes an empty src dir before the mv; a src with a file in it is refused with nothing moved"
+
+# --- 5e. prior with e: validated; older prior values without e still undo ------
+make_library
+split_fixtures
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --apply
+MAN="$(newest .manifest.tsv)"
+cp "$MAN" "$T/man.bak"
+sed -i '4 s/"e":\[1002\]/"e":["x"]/' "$MAN"
+reset_stub
+post_split_fixtures
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
+expect split-undo-prior-e 1 '\[ERROR\] undo preflight: malformed row: series' 'nothing moved'
+[[ -z "$(mutating)" ]] || fail split-undo-prior-e "changes despite a malformed e"
+sed 's/,"e":\[1002\]//' "$T/man.bak" > "$MAN"
+reset_stub
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
+expect split-undo-prior-e 0 '\[INFO\] undone: 3 rows'
+refute split-undo-prior-e '\[WARN\]'
+! grep -q '^PUT sonarr /api/v3/episode/monitor' "$STUB_LOG" || fail split-undo-prior-e "episode PUT without e"
+ok "a malformed prior e fails the undo preflight; a prior without e undoes with no episode PUT"
 
 # --- 6. CLI ---------------------------------------------------------------------
 run_capture "$SPLIT" --bogus

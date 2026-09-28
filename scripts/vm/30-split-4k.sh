@@ -22,8 +22,9 @@ TAG=4k-only
 HEADER=$'kind\tinstance\tid\ttitle\tsrc\tdst\tfiles\taction'
 # The manifest adds the id created in the 4K instance and the HD item's
 # monitored state before the split (compact JSON, e.g.
-# {"m":true,"s":{"0":false,"1":true}}; "s" only for series). Manifests
-# written before "prior" existed end at new_id.
+# {"m":true,"s":{"0":false,"1":true},"e":[1002]}; "s" and "e" only for
+# series, "e" being the ids of its unmonitored episodes, left out when
+# there are none). Manifests written before "prior" existed end at new_id.
 MANIFEST_HEADER="$HEADER"$'\tnew_id\tprior'
 LEGACY_MANIFEST_HEADER="$HEADER"$'\tnew_id'
 MIGRATION="$APPDATA_ROOT/.migration"
@@ -52,12 +53,17 @@ path dst, monitored, no search; series monitor "existing"; series keep
 the HD seasonFolder and seriesType); rescan it; unmonitor it (and every
 season) in HD, tag it $TAG and rescan it in HD. Each row goes to
 split-4k-<ts>.manifest.tsv with the id created in the 4K instance and the
-HD monitored state before the split (column prior).
+HD monitored state before the split (column prior; for series also the
+seasons and the ids of the unmonitored episodes).
 Undo (--undo <manifest>): in reverse row order, mv dst src, DELETE the 4K
 item (deleteFiles=false), restore the HD item's monitored state (seasons
-too) from prior, remove the tag and rescan it; then the manifest is
-renamed to <manifest>.undone. A manifest without prior (older header)
-re-monitors the item and every season, with a warning.
+too) from prior, remove the tag, unmonitor again the episodes that were
+unmonitored before the split, and rescan it; once every row is done the
+manifest is renamed to <manifest>.undone. A manifest without prior (older
+header) re-monitors the item and every season, with a warning. Undo can
+be re-run after a failure: a row whose dst is gone and whose src exists
+was already moved back (the mv is skipped, a 404 on its DELETE counts as
+done); an empty src dir (recreated by an HD rescan) is removed first.
 
 Dry-run by default: writes the plan, runs the preflight and prints each
 move as "DRY-RUN: mv ...". Pass --apply to make the changes (also for
@@ -113,11 +119,18 @@ fi
 umask 077
 W="$(mktemp -d)"
 MANIFEST=""
+MANIFEST_TMP=""
 PARTIAL=""
+UNDO_ROW=""
 
-# On a failed --apply, say what was left half-done and how to reverse it.
+# On a failed --apply, say what was left half-done and how to reverse it;
+# on a failed --undo --apply, which row it stopped at.
 on_exit() {
   local rc=$? done_rows=0
+  [[ -z "$MANIFEST_TMP" ]] || rm -f "$MANIFEST_TMP"
+  if [[ $rc -ne 0 && -n "$UNDO_ROW" && ${APPLY:-0} -eq 1 ]]; then
+    log_error "undo stopped at row $UNDO_ROW; re-run the same --undo command to continue"
+  fi
   if [[ $rc -ne 0 && -n "$MANIFEST" && -f "$MANIFEST" ]]; then
     done_rows=$(($(wc -l <"$MANIFEST") - 1))
     if [[ -n "$PARTIAL" ]]; then
@@ -139,6 +152,11 @@ on_disk() {
 # exists <path>: true for any file, dir or (even dangling) symlink.
 exists() {
   [[ -e "$1" || -L "$1" ]]
+}
+
+# empty_dir <path>: true for a real (not symlinked) directory with nothing in it.
+empty_dir() {
+  [[ -d "$1" && ! -L "$1" && -z "$(find "$1" -mindepth 1 -print -quit)" ]]
 }
 
 # The 4K test, per file (quality.quality.resolution and mediaInfo.resolution
@@ -179,20 +197,45 @@ rescan() {
   arr_command "$1" "$W/cmd.json"
 }
 
-# prior_of <item-file>: the item's monitored state as compact JSON,
-# {"m":<bool>} plus "s":{"<seasonNumber>":<bool>,...} for series.
+# prior_of <item-file> [<episodes-file>]: the item's monitored state as
+# compact JSON, {"m":<bool>} plus "s":{"<seasonNumber>":<bool>,...} for
+# series, and "e":[<id>,...], the series' unmonitored episodes, when the
+# episode list has any.
 prior_of() {
-  jq -c '{m: (.monitored != false)}
+  jq -c --slurpfile ep "${2:-/dev/null}" '{m: (.monitored != false)}
          + (if has("seasons")
             then {s: ([.seasons[]? | objects | {key: (.seasonNumber | tostring), value: (.monitored != false)}]
                       | from_entries)}
-            else {} end)' "$1"
+            else {} end)
+         + ([($ep[0] // [])[]? | objects | select(.monitored == false) | .id] | sort
+            | if length > 0 then {e: .} else {} end)' "$1"
 }
 
-# prior_ok <json>: true if it is a prior value as prior_of writes it.
+# prior_ok <json>: true if it is a prior value as prior_of writes it
+# ("e" optional: older manifests do not have it).
 prior_ok() {
   jq -e 'type == "object" and (.m | type) == "boolean"
-         and ((.s // {}) | type == "object" and all(.[]; type == "boolean"))' <<<"$1" >/dev/null 2>&1
+         and ((.s // {}) | type == "object" and all(.[]; type == "boolean"))
+         and ((.e // []) | type == "array"
+              and all(.[]; type == "number" and . >= 0 and . == floor))' <<<"$1" >/dev/null 2>&1
+}
+
+# delete_4k <svc> <path> <resumed>: the undo DELETE of a 4K item. For a
+# row an earlier undo already moved back (resumed=1), a 404 means that
+# undo deleted it already.
+delete_4k() {
+  if [[ $APPLY -ne 1 || $3 -ne 1 ]]; then
+    arr_change "$1" DELETE "$2"
+    return
+  fi
+  if arr_mutate "$1" DELETE "$2" >/dev/null 2>"$W/delete.err"; then
+    log_info "DELETE $1 $2"
+  elif grep -q -- ' -> HTTP 404$' "$W/delete.err"; then
+    log_info "DELETE $1 $2: already deleted (HTTP 404)"
+  else
+    cat "$W/delete.err" >&2
+    return 1
+  fi
 }
 
 # item_fields <item-file>: two lines, the title (tabs/newlines as spaces)
@@ -217,7 +260,10 @@ if [[ -n "$UNDO" ]]; then
   fi
   require_healthy radarr radarr-4k sonarr sonarr-4k
 
-  # Rows, newest first, validated before anything is touched.
+  # Rows, newest first, validated before anything is touched. A row whose
+  # dst is gone and whose src exists was moved back by an earlier undo
+  # that stopped later on; a src that is an empty dir (an HD rescan with
+  # createEmpty*Folders recreates it) is removed before the mv.
   mapfile -t ROWS < <(tail -n +2 "$UNDO" | tac)
   bad=()
   n=${#ROWS[@]}
@@ -228,9 +274,9 @@ if [[ -n "$UNDO" ]]; then
           || "$src$dst" == *"/../"* ]] || { [[ $LEGACY -eq 0 ]] && ! prior_ok "$prior"; }; then
       bad+=("malformed row: $row")
     elif ! exists "$(on_disk "$dst")"; then
-      bad+=("$kind $inst $id $title: $dst is missing")
-    elif exists "$(on_disk "$src")"; then
-      bad+=("$kind $inst $id $title: $src already exists")
+      exists "$(on_disk "$src")" || bad+=("$kind $inst $id $title: $dst is missing")
+    elif exists "$(on_disk "$src")" && ! empty_dir "$(on_disk "$src")"; then
+      bad+=("$kind $inst $id $title: $src already exists and is not an empty directory")
     fi
   done
   if [[ ${#bad[@]} -gt 0 ]]; then
@@ -250,10 +296,22 @@ if [[ -n "$UNDO" ]]; then
     IFS=$'\t' read -r kind inst id title src dst _ action new_id prior <<<"$row"
     [[ $LEGACY -eq 0 ]] || prior=null
     k=$((k + 1))
+    # The row's number in the manifest (rows are undone last first).
+    UNDO_ROW=$((n - k + 1))
     log_info "undo $k/$n: $kind $inst $id $title"
-    run mv -T -- "$(on_disk "$dst")" "$(on_disk "$src")"
+    resumed=0
+    if ! exists "$(on_disk "$dst")"; then
+      resumed=1
+      log_info "row $UNDO_ROW: $dst is gone and $src exists (moved back by an earlier undo); not moving it"
+    else
+      if exists "$(on_disk "$src")"; then
+        log_info "row $UNDO_ROW: removing the empty $src (recreated by an HD rescan)"
+        run rmdir -- "$(on_disk "$src")"
+      fi
+      run mv -T -- "$(on_disk "$dst")" "$(on_disk "$src")"
+    fi
     if [[ "$new_id" != - ]]; then
-      arr_change "$inst-4k" DELETE "/api/v3/$kind/$new_id?deleteFiles=false"
+      delete_4k "$inst-4k" "/api/v3/$kind/$new_id?deleteFiles=false" "$resumed"
     fi
     jq --argjson id "$id" '.[]? | objects | select(.id == $id)' "$W/$inst-items.json" >"$W/item.json"
     [[ -s "$W/item.json" ]] || die "$inst: $kind $id not found"
@@ -272,9 +330,17 @@ if [[ -n "$UNDO" ]]; then
             else . end
         end' "$W/item.json" >"$W/put.json"
     arr_change "$inst" PUT "/api/v3/$kind/$id" "$W/put.json"
+    # Sonarr re-monitors every episode of a season whose monitored flag
+    # goes back to true: unmonitor again those that were unmonitored.
+    if [[ "$kind" == series ]] && jq -e --argjson p "$prior" '($p.e // []) | length > 0' <<<null >/dev/null; then
+      jq -n --argjson p "$prior" '{episodeIds: $p.e, monitored: false}' >"$W/episodes.json"
+      arr_change "$inst" PUT /api/v3/episode/monitor "$W/episodes.json"
+    fi
     rescan "$inst" "$kind" "$id"
   done
-  # A reversed manifest no longer counts for verify-media.sh.
+  UNDO_ROW=""
+  # A reversed manifest no longer counts for verify-media.sh; renamed only
+  # once every row is done, so a failed undo can be re-run.
   run mv -T -- "$UNDO" "$UNDO.undone"
   if [[ $APPLY -eq 1 ]]; then
     log_info "undone: $n rows from $UNDO"
@@ -429,9 +495,16 @@ apply_row() {
   local n="$1" kind inst id title src dst uhd ext new_id prior lk="$W/lookup.json"
   IFS=$'\t' read -r kind inst id title src dst _ _ <<<"$2"
   uhd="$inst-4k"
-  local item="$W/$inst-item-$id.json"
-  # The HD monitored state from the plan's GET, before anything changes it.
-  prior="$(prior_of "$item")"
+  local item="$W/$inst-item-$id.json" episodes=""
+  # The HD monitored state from the plan's GET, before anything changes it;
+  # for series also its episodes' (the HD PUT unmonitors every episode).
+  if [[ "$kind" == series ]]; then
+    episodes="$W/$inst-episodes-$id.json"
+    api "$inst" GET "/api/v3/episode?seriesId=$id" >"$episodes"
+    jq -e 'type == "array" and all(.[]; type == "object" and (.id | type) == "number")' "$episodes" >/dev/null \
+      || die "$inst: the episode list of series $id is not an array of episodes"
+  fi
+  prior="$(prior_of "$item" "$episodes")"
   prior_ok "$prior" || die "$inst: $kind $id: cannot record its monitored state"
 
   run mv -T -- "$(on_disk "$src")" "$(on_disk "$dst")"
@@ -472,9 +545,12 @@ apply_row() {
     new_id="$(jq -r '.id // empty' "$W/added.json")"
     [[ "$new_id" =~ ^[0-9]+$ ]] || die "$uhd: adding $kind '$title' returned no id"
   fi
-  # The row's new_id: rewrite the last manifest line.
-  sed -i '$ d' "$MANIFEST"
-  printf '%s\t%s\t%s\n' "$2" "$new_id" "$prior" >>"$MANIFEST"
+  # The row's new_id: the manifest with its last line replaced, written
+  # next to it and renamed over it, so it is never left without the row.
+  MANIFEST_TMP="$(mktemp "$MIGRATION/.split-4k-manifest.XXXXXX")"
+  { sed '$ d' "$MANIFEST"; printf '%s\t%s\t%s\n' "$2" "$new_id" "$prior"; } >"$MANIFEST_TMP"
+  mv -f -- "$MANIFEST_TMP" "$MANIFEST"
+  MANIFEST_TMP=""
 
   rescan "$uhd" "$kind" "$new_id"
 
