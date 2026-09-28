@@ -1,13 +1,13 @@
 # Project State
 
 ## Current Position
-- **Phase**: 2 of 6 (planned)
-- **Status**: Phase 2 planned — 4 plans across 3 waves
-- **Last Activity**: Phase 2 planning, spec revised after the plan critique (2026-09-28)
+- **Phase**: 2 of 6 (executing)
+- **Status**: Phase 2 executing — wave 1 complete (02-01, 02-02); wave 2 (02-03) next
+- **Last Activity**: Phase 2 wave 1 execution (2026-09-28)
 
 ## Progress
 ```
-[#####...............] 22% — 5/23 plans complete
+[######..............] 30% — 7/23 plans complete
 ```
 
 ## Recent Decisions
