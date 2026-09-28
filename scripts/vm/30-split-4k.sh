@@ -58,12 +58,14 @@ seasons and the ids of the unmonitored episodes).
 Undo (--undo <manifest>): in reverse row order, mv dst src, DELETE the 4K
 item (deleteFiles=false), restore the HD item's monitored state (seasons
 too) from prior, remove the tag, unmonitor again the episodes that were
-unmonitored before the split, and rescan it; once every row is done the
-manifest is renamed to <manifest>.undone. A manifest without prior (older
-header) re-monitors the item and every season, with a warning. Undo can
-be re-run after a failure: a row whose dst is gone and whose src exists
-was already moved back (the mv is skipped, a 404 on its DELETE counts as
-done); an empty src dir (recreated by an HD rescan) is removed first.
+unmonitored before the split (those that still exist), and rescan it;
+once every row is done the manifest is renamed to <manifest>.undone. A
+manifest without prior (older header) re-monitors the item and every
+season, with a warning. Undo can be re-run after a failure: a row whose
+dst is gone and whose src exists and is not empty was already moved back
+(the mv is skipped; a 404 on a GET of its 4K item counts as deleted); an
+empty src dir (recreated by an HD rescan) is removed first, and a row
+with dst gone and src empty or missing fails the preflight.
 
 Dry-run by default: writes the plan, runs the preflight and prints each
 move as "DRY-RUN: mv ...". Pass --apply to make the changes (also for
@@ -159,6 +161,12 @@ empty_dir() {
   [[ -d "$1" && ! -L "$1" && -z "$(find "$1" -mindepth 1 -print -quit)" ]]
 }
 
+# moved_back </data/src>: true if src exists and is not an empty dir (a
+# row whose dst is gone was then moved back by an earlier undo).
+moved_back() {
+  exists "$(on_disk "$1")" && ! empty_dir "$(on_disk "$1")"
+}
+
 # The 4K test, per file (quality.quality.resolution and mediaInfo.resolution
 # "WxH"), and a title's action from its list of files.
 # shellcheck disable=SC2016  # jq program: its $vars are jq's, not the shell's
@@ -222,11 +230,17 @@ prior_ok() {
 
 # delete_4k <svc> <path> <resumed>: the undo DELETE of a 4K item. For a
 # row an earlier undo already moved back (resumed=1), a 404 means that
-# undo deleted it already.
+# undo deleted it already. The item is read first: Sonarr answers a
+# DELETE of a missing series with 500 (its list Get), a GET with 404.
 delete_4k() {
   if [[ $APPLY -ne 1 || $3 -ne 1 ]]; then
     arr_change "$1" DELETE "$2"
     return
+  fi
+  if ! api "$1" GET "${2%%\?*}" >/dev/null 2>"$W/delete.err" \
+      && grep -q -- ' -> HTTP 404$' "$W/delete.err"; then
+    log_info "DELETE $1 $2: already deleted (HTTP 404)"
+    return 0
   fi
   if arr_mutate "$1" DELETE "$2" >/dev/null 2>"$W/delete.err"; then
     log_info "DELETE $1 $2"
@@ -261,9 +275,10 @@ if [[ -n "$UNDO" ]]; then
   require_healthy radarr radarr-4k sonarr sonarr-4k
 
   # Rows, newest first, validated before anything is touched. A row whose
-  # dst is gone and whose src exists was moved back by an earlier undo
-  # that stopped later on; a src that is an empty dir (an HD rescan with
-  # createEmpty*Folders recreates it) is removed before the mv.
+  # dst is gone and whose src exists and is not an empty dir was moved
+  # back by an earlier undo that stopped later on; a src that is an empty
+  # dir (an HD rescan with createEmpty*Folders recreates it) is removed
+  # before the mv, and with dst gone too the title is missing.
   mapfile -t ROWS < <(tail -n +2 "$UNDO" | tac)
   bad=()
   n=${#ROWS[@]}
@@ -274,7 +289,7 @@ if [[ -n "$UNDO" ]]; then
           || "$src$dst" == *"/../"* ]] || { [[ $LEGACY -eq 0 ]] && ! prior_ok "$prior"; }; then
       bad+=("malformed row: $row")
     elif ! exists "$(on_disk "$dst")"; then
-      exists "$(on_disk "$src")" || bad+=("$kind $inst $id $title: $dst is missing")
+      moved_back "$src" || bad+=("$kind $inst $id $title: $dst is missing")
     elif exists "$(on_disk "$src")" && ! empty_dir "$(on_disk "$src")"; then
       bad+=("$kind $inst $id $title: $src already exists and is not an empty directory")
     fi
@@ -300,7 +315,7 @@ if [[ -n "$UNDO" ]]; then
     UNDO_ROW=$((n - k + 1))
     log_info "undo $k/$n: $kind $inst $id $title"
     resumed=0
-    if ! exists "$(on_disk "$dst")"; then
+    if ! exists "$(on_disk "$dst")" && moved_back "$src"; then
       resumed=1
       log_info "row $UNDO_ROW: $dst is gone and $src exists (moved back by an earlier undo); not moving it"
     else
@@ -331,10 +346,22 @@ if [[ -n "$UNDO" ]]; then
         end' "$W/item.json" >"$W/put.json"
     arr_change "$inst" PUT "/api/v3/$kind/$id" "$W/put.json"
     # Sonarr re-monitors every episode of a season whose monitored flag
-    # goes back to true: unmonitor again those that were unmonitored.
+    # goes back to true: unmonitor again those that were unmonitored. Only
+    # ids that still exist (a TVDB refresh can delete episodes, and the
+    # PUT fails on a missing id).
     if [[ "$kind" == series ]] && jq -e --argjson p "$prior" '($p.e // []) | length > 0' <<<null >/dev/null; then
-      jq -n --argjson p "$prior" '{episodeIds: $p.e, monitored: false}' >"$W/episodes.json"
-      arr_change "$inst" PUT /api/v3/episode/monitor "$W/episodes.json"
+      api "$inst" GET "/api/v3/episode?seriesId=$id" >"$W/episodes-now.json"
+      jq -e 'type == "array" and all(.[]; type == "object" and (.id | type) == "number")' "$W/episodes-now.json" >/dev/null \
+        || die "$inst: the episode list of series $id is not an array of episodes"
+      jq --argjson p "$prior" '[.[].id] as $now | {episodeIds: [$p.e[] | select(IN($now[]))], monitored: false}' \
+        "$W/episodes-now.json" >"$W/episodes.json"
+      gone=$(($(jq -n --argjson p "$prior" '$p.e | length') - $(jq '.episodeIds | length' "$W/episodes.json")))
+      if (( gone > 0 )); then
+        log_info "$gone episode id(s) from prior.e no longer exist; skipped"
+      fi
+      if jq -e '.episodeIds | length > 0' "$W/episodes.json" >/dev/null; then
+        arr_change "$inst" PUT /api/v3/episode/monitor "$W/episodes.json"
+      fi
     fi
     rescan "$inst" "$kind" "$id"
   done

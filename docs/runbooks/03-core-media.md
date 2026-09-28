@@ -618,7 +618,10 @@ non-4K episodes are never moved; you decide on each one.
    `WAIT_TIMEOUT=1800 scripts/vm/30-split-4k.sh --undo <manifest> --apply`.
    If an undo stops partway (`undo stopped at row <n>; re-run the same
    --undo command to continue`), re-run the same command: rows already
-   moved back are finished without moving them again.
+   moved back are finished without moving them again. If the preflight says
+   `<dst> is missing` for a row, its 4K folder is gone and the HD folder is
+   missing or empty: nothing was changed. Find the title's files (or use
+   the `zfs rollback` in Rollback) before running the undo again.
 
 ## 6. Plex
 

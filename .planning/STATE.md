@@ -2,7 +2,7 @@
 
 ## Current Position
 - **Phase**: 2 of 6 (under review)
-- **Status**: Phase 2 review escalated — 3 unresolved warnings (4K split --undo resume path) after 3 cycles; 0 blockers
+- **Status**: Phase 2 review escalated after 3 cycles; the 3 open warnings are now fixed (split undo resume path) — targeted re-review pending
 - **Last Activity**: Phase 2 review escalated (2026-09-28)
 
 ## Progress
@@ -37,6 +37,6 @@
 - Phase 1 PR: #3 `dev` → `main` (https://github.com/ace027/home-media-server/pull/3; supersedes #2, which was opened from a now-retired `claude/` branch); includes review fixes 5d72178, 0a01d43
 
 ## Next Action
-Review `.planning/phases/02-core-media-automation/02-REVIEW.md`. Fix the 3 open warnings (split undo resume path) then re-run `/legion:review`, or accept as-is. After review, the owner runs `docs/runbooks/03-core-media.md` on media-01 and fills in its Acceptance record
+Run `/legion:review` for a targeted re-check of the escalation fixes (`30-split-4k.sh` undo). After review, the owner runs `docs/runbooks/03-core-media.md` on media-01 and fills in its Acceptance record
 
 Hardware state (2026-09-28): pool imported on the new host and trimmed (autotrim on); library copied into `tank/data/media` and verified (movies 89, tv 820, anime-tv 1058 files; no music on the old pool); ownership 1000:1000; originals kept in `/tank/{movies,shows,anime}` plus `tank@pre-migration` until Phase 2 confirms the library. IOMMU/vfio active (A380 + audio on vfio-pci), ZFS ARC capped at 2 GB. VM 200 `media-01` (Debian 13) at 192.168.50.16 with Docker, `/data` over virtiofs and the TRaSH tree. Old app configs are in `/tank/migration/old-docker-2026-09-27.tar.zst` for Phase 2.

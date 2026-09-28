@@ -302,9 +302,9 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
      - Rescan the HD item (`{"name":"RescanMovie","movieId":<id>}` or `{"name":"RescanSeries","seriesId":<id>}`) with `wait_cmd`, so HD drops the moved files now rather than at its next refresh. With `--apply`, each rescan logs `[INFO] POST <svc> /api/v3/command {"name":"RescanMovie|RescanSeries"}; waiting`; the HD one follows the `[INFO] PUT <hd> /api/v3/<kind>/<id>` line.
   3. Manifest columns: `kind instance id title src dst files action new_id prior`.
 - Undo, in reverse manifest order (resumable: re-running the same `--undo` after a failure continues):
-  1. `mv dst src`. If `src` is an empty directory (an HD rescan with `createEmpty*Folders` recreated it), `rmdir` it first; a non-empty `src` fails the preflight. A row whose `dst` is gone and `src` exists was moved back by an earlier undo: skip the `mv`.
-  2. `DELETE` the 4K item with `deleteFiles=false` (for a row already moved back, HTTP 404 counts as done).
-  3. Restore the HD item's monitored state from `prior`: the item's `monitored`, and each season listed in `prior` (a season added since the split keeps its current state). Remove the tag. If `prior.e` is non-empty, `PUT /api/v3/episode/monitor {"episodeIds":e,"monitored":false}`.
+  1. `mv dst src`. If `src` is an empty directory (an HD rescan with `createEmpty*Folders` recreated it), `rmdir` it first; a non-empty `src` fails the preflight. A row whose `dst` is gone and `src` exists and is not empty was moved back by an earlier undo: skip the `mv`. A row whose `dst` is gone and `src` is missing or empty fails the preflight (`<dst> is missing`); nothing is changed.
+  2. `DELETE` the 4K item with `deleteFiles=false`. For a row already moved back, first `GET` the 4K item: a 404 means it is already deleted, so skip the DELETE (Sonarr v4 answers a DELETE of a missing series with HTTP 500, not 404).
+  3. Restore the HD item's monitored state from `prior`: the item's `monitored`, and each season listed in `prior` (a season added since the split keeps its current state). Remove the tag. If `prior.e` is non-empty, intersect it with the ids from `GET /api/v3/episode?seriesId=<id>` (episodes deleted since the split are skipped and logged), then `PUT /api/v3/episode/monitor {"episodeIds":…,"monitored":false}` when any remain.
   4. Rescan the HD item.
   5. After the last row, rename the manifest to `<manifest>.undone`; on a failure print `undo stopped at row <n>; re-run the same --undo command to continue` and keep the manifest.
   - The manifest's `new_id` is rewritten atomically (temp file in the same dir, then `mv -f`).
@@ -589,6 +589,7 @@ Done during `/legion:plan 2`, not part of the build: PROJECT.md (R5, R12, decisi
 | 35 | `25-arr-wire.sh` Prowlarr | Prowlarr's SAB client category is `*` (row 33's empty value is rejected by Prowlarr's validator) | Phase 2 review cycle 2 |
 | 36 | `30-split-4k.sh` undo, manifest | Undo is resumable; empty recreated `src` removed; `prior.e` restores unmonitored episodes; atomic `new_id` rewrite | Phase 2 review cycle 2 |
 | 37 | `10-restore-appdata.sh` | `.rollback`, `.rollback/<ts>` and `-undone` refused if a symlink (always) or not root-owned (`--apply`); `.rollback` created root-owned 700 | Phase 2 review cycle 2 |
+| 38 | `30-split-4k.sh` undo | Resumed rows: GET before DELETE (Sonarr 500 on a missing id); an empty `src` is not "moved back"; stale `prior.e` ids skipped | Phase 2 review escalation fixes |
 
 ## Complexity Assessment
 

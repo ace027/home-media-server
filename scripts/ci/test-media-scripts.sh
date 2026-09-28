@@ -439,10 +439,13 @@ expect split-undo-resume 1 'DELETE radarr-4k /api/v3/movie/32\?deleteFiles=false
   && -d "$DATA_ROOT/media/movies-4k/Big 4K Movie (2019)" ]] || fail split-undo-resume "row 2 not moved back or row 1 touched"
 FIRST_LOG="$(cat "$STUB_LOG")"
 # The re-run: row 3 (fully undone) and row 2 (moved back) are resumed:
-# no mv; row 3's 4K series is gone (404 counts as done), row 2's DELETE
-# now works; their HD PUTs and rescans are sent again.
+# no mv; each 4K item is read first. Series 41 is gone: as in Sonarr
+# v4.0.19, its GET is 404 and a DELETE would be 500 (list Get), so no
+# DELETE is sent. Movie 32 still exists and its DELETE now works; their
+# HD PUTs and rescans are sent again.
 rm -f "$T/fx/radarr-4k/DELETE_api_v3_movie_32_deleteFiles_false.http"
-printf '404\n' > "$T/fx/sonarr-4k/DELETE_api_v3_series_41_deleteFiles_false.http"
+printf '500\n' > "$T/fx/sonarr-4k/DELETE_api_v3_series_41_deleteFiles_false.http"
+printf '404\n' > "$T/fx/sonarr-4k/GET_api_v3_series_41.http"
 reset_stub
 run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
 expect split-undo-resume 0 '\[INFO\] undone: 3 rows' \
@@ -451,19 +454,25 @@ expect split-undo-resume 0 '\[INFO\] undone: 3 rows' \
   '\[INFO\] DELETE sonarr-4k /api/v3/series/41\?deleteFiles=false: already deleted \(HTTP 404\)$' \
   '\[INFO\] DELETE radarr-4k /api/v3/movie/32\?deleteFiles=false$'
 refute split-undo-resume 'row 1: .*not moving it'
+[[ "$(grep -E '^(GET|DELETE) (radarr|sonarr)-4k /api/v3/(movie|series)/[0-9]+' "$STUB_LOG")" == "GET sonarr-4k /api/v3/series/41
+GET radarr-4k /api/v3/movie/32
+DELETE radarr-4k /api/v3/movie/32?deleteFiles=false
+DELETE radarr-4k /api/v3/movie/31?deleteFiles=false" ]] \
+  || fail split-undo-resume "resumed rows not read before the DELETE, or series 41 DELETEd again"
 for m in "Big 4K Movie (2019)" "Unmonitored 4K Movie (2017)"; do
   [[ -f "$DATA_ROOT/media/movies/$m/movie.mkv" && ! -e "$DATA_ROOT/media/movies-4k/$m" ]] || fail split-undo-resume "$m not moved back"
 done
 [[ -f "$DATA_ROOT/media/tv/UHD Show/Season 01/e01.mkv" && ! -e "$DATA_ROOT/media/tv-4k/UHD Show" ]] || fail split-undo-resume "UHD Show not moved back"
 [[ -f "$MAN.undone" && ! -e "$MAN" ]] || fail split-undo-resume "manifest not renamed to .undone"
 # Final state = a clean undo: the re-run sends the same DELETE/PUT requests
-# (same bodies, same order) as the clean undo in case 5, and every 4K item
-# was deleted (41 in the first run, 32 and 31 in the re-run).
-[[ "$(grep -E '^(PUT|DELETE) ' "$STUB_LOG")" == "$CLEAN_UNDO" ]] \
+# (same bodies, same order) as the clean undo in case 5, less the DELETE
+# of series 41, and every 4K item was deleted (41 in the first run, 32
+# and 31 in the re-run).
+[[ "$(grep -E '^(PUT|DELETE) ' "$STUB_LOG")" == "$(grep -vxF 'DELETE sonarr-4k /api/v3/series/41?deleteFiles=false' <<<"$CLEAN_UNDO")" ]] \
   || fail split-undo-resume "re-run requests differ from a clean undo:"$'\n'"$(grep -E '^(PUT|DELETE) ' "$STUB_LOG")"
 grep -qx 'DELETE sonarr-4k /api/v3/series/41?deleteFiles=false' <<<"$FIRST_LOG" || fail split-undo-resume "series 41 not deleted in the first run"
 no_secrets split-undo-resume "$OUT"
-ok "an undo that stops at a row (exit 1, re-run hint) re-runs to the clean-undo state: no second mv, 404 on DELETE counts as done"
+ok "an undo that stops at a row (exit 1, re-run hint) re-runs to the clean-undo state: no second mv, a 404 GET skips the DELETE (Sonarr: 500)"
 
 # --- 5d. an empty src recreated by an HD rescan does not block undo -------------
 make_library
@@ -516,6 +525,54 @@ expect split-undo-prior-e 0 '\[INFO\] undone: 3 rows'
 refute split-undo-prior-e '\[WARN\]'
 ! grep -q '^PUT sonarr /api/v3/episode/monitor' "$STUB_LOG" || fail split-undo-prior-e "episode PUT without e"
 ok "a malformed prior e fails the undo preflight; a prior without e undoes with no episode PUT"
+
+# --- 5f. dst gone and an empty src: missing, not "already moved back" ------------
+make_library
+split_fixtures
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --apply
+MAN="$(newest .manifest.tsv)"
+reset_stub
+post_split_fixtures
+# The 4K folder is lost; an HD rescan recreated an empty HD folder.
+rm -rf "$DATA_ROOT/media/movies-4k/Big 4K Movie (2019)"
+mkdir "$DATA_ROOT/media/movies/Big 4K Movie (2019)"
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
+expect split-undo-lost 1 \
+  '\[ERROR\] undo preflight: movie radarr 11 Big 4K Movie: /data/media/movies-4k/Big 4K Movie \(2019\) is missing$' \
+  'undo preflight failed for 1 of 3 rows; nothing moved'
+refute split-undo-lost 'not moving it|undo stopped at row'
+[[ -z "$(mutating)" && -f "$MAN" && -d "$DATA_ROOT/media/tv-4k/UHD Show" \
+  && -d "$DATA_ROOT/media/movies-4k/Unmonitored 4K Movie (2017)" ]] || fail split-undo-lost "changes despite a lost 4K folder"
+empty_dir_left() { [[ -d "$1" && -z "$(find "$1" -mindepth 1 -print -quit)" ]]; }
+empty_dir_left "$DATA_ROOT/media/movies/Big 4K Movie (2019)" || fail split-undo-lost "the empty src was touched"
+ok "undo preflight: a dst that is gone with an empty src fails as missing, with nothing changed"
+
+# --- 5g. prior.e ids deleted since the split (TVDB refresh) are skipped ----------
+make_library
+split_fixtures
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --apply
+MAN="$(newest .manifest.tsv)"
+cp "$MAN" "$T/man.bak"
+reset_stub
+post_split_fixtures
+# Every id gone (dry-run): no PUT at all.
+sed -i '4 s/"e":\[1002\]/"e":[1098,1099]/' "$MAN"
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN"
+expect split-undo-stale-e 0 '\[INFO\] 2 episode id\(s\) from prior.e no longer exist; skipped$'
+refute split-undo-stale-e 'episode/monitor'
+[[ -z "$(mutating)" ]] || fail split-undo-stale-e "dry-run changed something"
+# One id left (1002), one gone (1099): the PUT carries only 1002.
+sed '4 s/"e":\[1002\]/"e":[1002,1099]/' "$T/man.bak" > "$MAN"
+reset_stub
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
+expect split-undo-stale-e 0 '\[INFO\] undone: 3 rows' \
+  '\[INFO\] 1 episode id\(s\) from prior.e no longer exist; skipped$' '\[INFO\] PUT sonarr /api/v3/episode/monitor$'
+bodies "PUT sonarr /api/v3/episode/monitor" | jq -se '. == [{episodeIds: [1002], monitored: false}]' >/dev/null \
+  || fail split-undo-stale-e "episode PUT body is not only the existing id 1002"
+[[ "$(grep -nE '^PUT sonarr /api/v3/series/1 |^GET sonarr /api/v3/episode\?seriesId=1$|^PUT sonarr /api/v3/episode/monitor ' "$STUB_LOG" \
+  | cut -d: -f2 | cut -c1-24)" == $'PUT sonarr /api/v3/serie\nGET sonarr /api/v3/episo\nPUT sonarr /api/v3/episo' ]] \
+  || fail split-undo-stale-e "episode list not read between the series PUT and the episode PUT"
+ok "undo skips prior.e ids that no longer exist (log line), and sends no episode PUT when none is left"
 
 # --- 6. CLI ---------------------------------------------------------------------
 run_capture "$SPLIT" --bogus
