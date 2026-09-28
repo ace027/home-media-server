@@ -11,6 +11,7 @@ Guidance for Claude Code sessions working in this repository.
   git checkout -B <assigned-branch> origin/dev
   ```
   If the assigned branch already exists but was cut from `main`, rebase or merge it onto `origin/dev` before starting.
+- Changes are tested on `dev` first (CI, then the owner's run on the real VM). Never open a PR from a `claude/...` branch into `main`; only `dev` → `main` release PRs target `main`.
 - `dev` is merged into `main` through a PR when a phase (or a set of phases) is complete.
 - Delete `claude/...` branches after their PR merges into `dev`.
 

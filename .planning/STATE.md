@@ -33,6 +33,7 @@
 - Phase 1 issue: #1 (https://github.com/ace027/home-media-server/issues/1), closed
 - Phase 2 issue: #5 (https://github.com/ace027/home-media-server/issues/5)
 - Branches: `main` (default, released), `dev` (integration; all work branches from and merges into `dev`)
+- Phase 2 PR: #6 `claude/legion-status-5mlysg` → `dev` (https://github.com/ace027/home-media-server/pull/6). Phase 2 reaches `main` only through a later `dev` → `main` PR, after review and owner acceptance
 - Phase 1 PR: #3 `dev` → `main` (https://github.com/ace027/home-media-server/pull/3; supersedes #2, which was opened from a now-retired `claude/` branch); includes review fixes 5d72178, 0a01d43
 
 ## Next Action
