@@ -1,6 +1,6 @@
 # home-media-server
 
-This is a GitOps Docker Compose repository for a home media platform on Proxmox. It covers a complete Usenet ARR stack, with Plex as the primary server and Jellyfin as a backup. Traefik and Authentik handle public access, Twingate provides the only way into the admin tools, DDNS tracks the dynamic IP, and FileFlows converts the library to AV1 on an Intel Arc A380. Everything is reproducible from this repo except secrets.
+This is a GitOps Docker Compose repository for a home media platform on Proxmox. It covers a complete Usenet ARR stack, with Plex as the media server (Jellyfin runs only as an optional side-by-side evaluation). Traefik and Authentik handle public access, Twingate provides the only way into the admin tools, DDNS tracks the dynamic IP, and FileFlows converts the library to AV1 on an Intel Arc A380. Everything is reproducible from this repo except secrets.
 
 ## Quick start
 1. Follow the host runbook: [`docs/runbooks/01-proxmox-host.md`](docs/runbooks/01-proxmox-host.md) (ZFS datasets, IOMMU/vfio, VM creation).
@@ -20,3 +20,6 @@ secrets/         # gitignored; Docker secrets or *_FILE sources (never committed
 
 ## Documentation
 See [`docs/README.md`](docs/README.md) for the full documentation index.
+
+## Branches
+`main` is the default branch and holds released work. Development happens on `dev`: feature branches are cut from `dev` and merged back into it by PR, and `dev` is merged into `main` when a phase is complete. See [`CLAUDE.md`](CLAUDE.md).

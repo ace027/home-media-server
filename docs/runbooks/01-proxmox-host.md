@@ -48,9 +48,13 @@ Before touching software, set these in the host's BIOS/UEFI setup:
 
 - **Intel VT-d** (or **AMD-Vi** on AMD platforms) — enabled. This is
   IOMMU support and is required for PCI passthrough.
-- **Above 4G Decoding** — enabled. Required for the A380's large PCI BARs.
-- **Resizable BAR (ReBAR)** — enabled. Intel Arc GPUs perform poorly, or
-  fail to initialize under passthrough, without it.
+- **Above 4G Decoding** and **Resizable BAR (ReBAR)** — enable them *if
+  the BIOS has them*. ReBAR mainly matters for Arc gaming performance; for
+  this build's media work (QSV transcoding in Plex/Jellyfin, AV1 encoding in
+  FileFlows) the A380 works with the default 256 MB BAR. Older platforms
+  (e.g. Intel Skylake / 100-series boards, like the owner's Dell) often have
+  neither option; that is fine — don't hold up the build for it. See
+  Troubleshooting for how to check what the card actually got.
 - Optionally, if the host also has an integrated GPU (iGPU) or onboard
   video, set the **primary display** to that device rather than the A380,
   so the A380 stays free for passthrough and the host console doesn't
@@ -60,8 +64,10 @@ Save, reboot into Proxmox, and continue below.
 
 ## 1a. Migrating an existing pool
 
-Skip this section if `tank` is a fresh pool created from scratch (`## 2. ZFS
-datasets` below creates it). Follow it instead if `/data` will be an
+Skip this section if `tank` is a new, empty pool you created yourself on
+this host (with `zpool create`, as the Prerequisites assume). `## 2. ZFS
+datasets` below only creates the datasets on an existing pool; it never
+creates the pool itself. Follow this section instead if `/data` will be an
 **existing** ZFS pool, on SSDs, moved from another (still-running) server
 into this Proxmox host, with a media library on it that must be kept.
 Nothing in this procedure destroys or overwrites data by default: import
@@ -79,14 +85,18 @@ consolidated without you naming it.
    # 1) Record what was running (image tags matter: Phase 2 restores onto the
    #    same or newer versions, never older, or the app databases can't be read)
    docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | sudo tee /docker/_containers.txt
-   docker inspect $(docker ps -aq) | sudo tee /docker/_inspect.json >/dev/null
+   # _inspect.json and _compose-resolved.yml hold live secrets copied from the
+   # containers' env (Twingate tokens, VPN keys, *arr API keys), so they are
+   # written root-only (umask 077) and are never world-readable, even briefly.
+   docker inspect $(docker ps -aq) | sudo sh -c 'umask 077; cat > /docker/_inspect.json'
    docker inspect --format '{{.Name}} {{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.version"}}' $(docker ps -aq) | sudo tee /docker/_versions.txt
    # Old layout: two compose projects, /docker/plex (plex, seerr, tautulli)
    # and /docker/servarr (everything else). Save the resolved compose files;
    # their volume mappings are what Phase 2 uses to remap old paths.
    ls /docker/plex /docker/servarr | sudo tee /docker/_layout.txt
    for p in /docker/plex /docker/servarr; do (cd "$p" && docker compose config); done \
-     | sudo tee /docker/_compose-resolved.yml >/dev/null
+     | sudo sh -c 'umask 077; cat > /docker/_compose-resolved.yml'
+   sudo ls -l /docker/_inspect.json /docker/_compose-resolved.yml   # expect -rw------- root
    du -sh /docker                     # size check (Plex metadata can be large)
 
    # 2) Stop the containers so the SQLite databases are consistent
@@ -94,20 +104,51 @@ consolidated without you naming it.
 
    # 3) Stream an archive straight onto the pool on the old Proxmox host
    #    (no local disk space needed). Plex's Cache is disposable, so it's excluded.
-   ssh root@<old-proxmox-host> 'mkdir -p /tank/migration'
+   #    (chmod, not mkdir -m: -m has no effect on an existing directory)
+   ssh root@<old-proxmox-host> 'mkdir -p /tank/migration && chmod 700 /tank/migration'
    sudo tar --exclude='*/Plex Media Server/Cache' -cpf - -C / docker \
      | zstd -T0 \
-     | ssh root@<old-proxmox-host> "cat > /tank/migration/old-docker-$(date +%F).tar.zst"
+     | ssh root@<old-proxmox-host> "umask 077 && cat > /tank/migration/old-docker-$(date +%F).tar.zst"
 
-   # 4) Verify the archive before going any further
+   # 4) Verify the archive before going any further, and keep it root-only
+   #    (it contains the same secrets as _inspect.json)
    ssh root@<old-proxmox-host> "zstd -t /tank/migration/old-docker-*.tar.zst && tar -I zstd -tf /tank/migration/old-docker-*.tar.zst | head"
+   ssh root@<old-proxmox-host> "chmod 600 /tank/migration/old-docker-*.tar.zst && ls -l /tank/migration"
+   ```
+   **Secrets warning.** `_inspect.json`, `_compose-resolved.yml` and the
+   `.tar.zst` archive contain live credentials from the old containers'
+   environment: Twingate connector tokens, VPN keys and the *arr/SAB API
+   keys. Never copy them (or excerpts of them) into this git repository or
+   any other; `.gitignore` blocks these names as a safety net, not as
+   permission. Read what you need from them in place on the pool. Once the
+   old VM is retired, **revoke** the old Twingate connector's tokens (Twingate
+   admin console) and the old VPN credentials (the VPN provider's account
+   page), since copies of them now sit in these files. Also delete the plain
+   dumps from the old VM before it is retired (the archive on the pool keeps
+   a copy inside it):
+   ```bash
+   # on the old Ubuntu VM, once Phase 2 has restored the configs
+   sudo rm -f /docker/_inspect.json /docker/_compose-resolved.yml
    ```
    Expected output: `zstd -t` reports the file OK, and the listing starts with
    `docker/…`. If the containers must keep serving until the move, restart
    them now (`docker start $(docker ps -aq)`) and repeat steps 2–4 right
    before step 4 below, so the archive is current. Phase 2 restores these
    configs from `/tank/migration/` and remaps their paths to `/data/...`.
-1. Stop anything using the pool (Plex, *arr apps, SMB/NFS shares, etc.).
+1. Stop anything using the pool (Plex, *arr apps, SMB/NFS shares, etc.),
+   including any **VM that mounts the pool over virtiofs** (its `virtiofsd`
+   processes hold `/tank` open, so `zpool export` fails with "pool is
+   busy"). Then stop the old Proxmox host from re-importing the pool on its
+   own: Proxmox's status daemon automatically imports any pool that backs
+   an enabled storage, seconds after you export it, and the new host then
+   reports the pool as "last accessed by another system". Disable every
+   storage on the pool first:
+   ```bash
+   pvesm status                                # find storages on the pool
+   grep -B1 -A4 -E 'pool tank|path /tank' /etc/pve/storage.cfg
+   pvesm set <storage-id> --disable 1          # for each one
+   fuser -vm /tank                             # expect only the "kernel mount" line
+   ```
 2. Confirm the pool is healthy:
    ```bash
    zpool status <pool>
@@ -121,7 +162,9 @@ consolidated without you naming it.
    ```bash
    zpool export <pool>
    ```
-   Expected output: the pool disappears from `zpool list`.
+   Expected output: the pool disappears from `zpool list`. Check again a
+   minute later: if `tank` is back, a storage on the old host is still
+   enabled (step 1), so disable it and export again.
 5. Physically move the SSDs to the new Proxmox host.
 
 ### Import (new host)
@@ -156,11 +199,36 @@ rather keep the pool's original name, pass `POOL=<old-name>` to every
 script from here on (including `00-zfs-datasets.sh` and `20-create-vm.sh`)
 instead of renaming.
 
-`FORCE_IMPORT=1` passes `-f` to `zpool import`, needed only if ZFS reports
+`FORCE_IMPORT=1` (environment only: set it on the command line; the
+script ignores it in `.env`) passes `-f` to `zpool import`, needed only if ZFS reports
 the pool as still "in use by another system" (e.g. the old server wasn't
 cleanly shut down, or you skipped `zpool export`). It is only safe once the
 old server is definitely no longer using the pool — importing a pool that's
 still live elsewhere can corrupt it.
+
+### TRIM the migrated SSDs
+
+A pool moved from another server may never have passed TRIM down to its
+SSDs (`autotrim` defaults to `off`). The drives then treat almost all of
+their flash as live data and must garbage-collect before every write, which
+makes large writes very slow. On the owner's pool the library copy ran at
+~85 MB/s (5–15 ms write latency) before trimming and ~200 MB/s after.
+Check it after the import:
+```bash
+zpool get autotrim tank
+zpool status -t tank            # "(untrimmed)" next to each disk = never trimmed
+lsblk --discard /dev/sdX        # non-zero DISC-GRAN/DISC-MAX = the drive supports TRIM
+```
+Trim once and turn on autotrim. Do it before the big copy into `tank/data`
+if you can; if a copy is already running, stop it (rsync resumes where it
+left off), trim, then resume, since the two compete for the same drives:
+```bash
+zpool trim tank                 # background; watch with: zpool status -t tank
+zpool set autotrim=on tank
+```
+The first trim of a mostly empty pool takes from tens of minutes to a few
+hours; give the drives ~10 minutes idle afterwards. Space held by snapshots
+(e.g. `tank@pre-migration`) isn't trimmed until the snapshot is destroyed.
 
 ### Do not `zpool upgrade`
 
@@ -279,9 +347,12 @@ once. There's plenty of room, and the copy picks up `tank/data`'s 1M recordsize.
    upload the Debian 13 netinst here and use `ISO=tank-iso:iso/<file>`
    with `20-create-vm.sh`:
    ```bash
-   pvesm add dir tank-iso --path /tank --content iso,vztmpl
+   pvesm add dir tank-iso --path /tank --content iso,vztmpl --is_mountpoint yes
    pvesm list tank-iso --content iso
    ```
+   `--is_mountpoint yes` makes Proxmox treat the storage as offline when
+   `/tank` isn't mounted, instead of silently writing into the empty
+   directory on the root filesystem.
 5. After Phase 2 confirms the library in Sonarr/Radarr/Lidarr and Plex:
    `zfs destroy tank@pre-migration`. This is irreversible and frees the old copy's space.
 
@@ -315,6 +386,11 @@ Then fix it, if needed:
 ```bash
 FIX_OWNERSHIP=1 scripts/host/05-import-pool.sh --apply
 ```
+`FIX_OWNERSHIP` is environment only: the script ignores it in `.env`, so a
+recursive `chown` never runs unless you ask for it on the command line. If
+the script prints `tank/data not mounted ...; ownership not checked`, mount
+it (`zfs mount tank/data`) and re-run; it doesn't report `ownership OK`
+unless it actually looked.
 
 Continue with `## 2. ZFS datasets` below — `00-zfs-datasets.sh` detects
 that `tank/data` already exists and sets its properties
@@ -387,15 +463,18 @@ Expected output:
 [INFO] detected audio: 0000:04:00.0
 [INFO] CPU vendor: GenuineIntel -> params: intel_iommu=on iommu=pt
 DRY-RUN: sed -i 's/$/ intel_iommu=on iommu=pt/' "/etc/kernel/cmdline"
-DRY-RUN: proxmox-boot-tool refresh
 DRY-RUN: mkdir -p "/etc/modules-load.d" && printf 'vfio\nvfio_iommu_type1\nvfio_pci\n' > "/etc/modules-load.d/vfio.conf"
 DRY-RUN: mkdir -p "/etc/modprobe.d" && printf 'options vfio-pci ids=8086:56a5,8086:4f92\nsoftdep i915 pre: vfio-pci\nsoftdep xe pre: vfio-pci\nsoftdep snd_hda_intel pre: vfio-pci\n' > "/etc/modprobe.d/vfio.conf"
 DRY-RUN: update-initramfs -u -k all
+DRY-RUN: proxmox-boot-tool refresh
 [WARN] reboot required for the new IOMMU/vfio configuration to take effect
 [INFO] after reboot, verify with: dmesg | grep -e DMAR -e IOMMU
 [INFO] after reboot, verify with: lspci -nnk -s 0000:03:00.0 (expect: Kernel driver in use: vfio-pci)
 ```
 (Captured on an Intel CPU, systemd-boot host, with nothing configured yet.
+Both refreshes run last, after every file is written: `update-initramfs`
+first, so that `proxmox-boot-tool refresh` (or `update-grub` on a GRUB host)
+picks up the rebuilt initramfs.
 PCI addresses like `0000:03:00.0` are specific to this host's slot layout;
 yours may differ. If detection fails or finds more than one match, set
 `GPU_PCI=<address>` explicitly.)
@@ -407,7 +486,23 @@ scripts/host/10-iommu-vfio.sh --apply
 reboot
 ```
 
-After the reboot, confirm IOMMU is active:
+After the reboot, confirm the running kernel actually got the new
+parameters (this catches an edit to a bootloader file this host doesn't
+boot from):
+
+```bash
+cat /proc/cmdline
+```
+
+Expected output (contains `intel_iommu=on iommu=pt`; just `iommu=pt` on AMD):
+```
+initrd=\EFI\proxmox\6.14.8-2-pve\initrd.img-6.14.8-2-pve root=ZFS=rpool/ROOT/pve-1 boot=zfs intel_iommu=on iommu=pt
+```
+(Representative; on a GRUB host it starts with `BOOT_IMAGE=/boot/vmlinuz-...`.)
+If the parameters are missing, the edit went to the wrong file: check which
+bootloader is in use with `proxmox-boot-tool status`.
+
+Confirm IOMMU is active:
 
 ```bash
 dmesg | grep -e DMAR -e IOMMU
@@ -463,12 +558,55 @@ DRY-RUN: qm set 200 --virtiofs0 media-data,cache=auto
 ```
 (Captured on a fresh host with nothing created yet. `<your-node>` is this
 host's hostname — the script fills it in automatically with `hostname`.)
+If the `media-data` mapping already exists, the script prints
+`mapping media-data exists -> <path>` instead of creating it, and refuses
+unless the mapping has an entry for this node pointing at `tank/data`'s
+mountpoint (`/tank/data`); fix the mapping in the GUI or set
+`DIR_MAPPING_ID` to a new id.
 
 If the ISO path shown by `pvesm list local --content iso` (Prerequisites)
 differs from the default, pass it explicitly:
 `ISO=local:iso/<file>.iso scripts/host/20-create-vm.sh`. On a host whose
 storage listing doesn't include `local-zfs`, also pass
 `VM_STORAGE=local-lvm` (or the correct storage name).
+
+### Sizing the VM for the host
+
+The script's defaults (`VM_CORES=8`, `VM_MEMORY=20480`,
+`VM_STORAGE=local-zfs`) assume a larger host with Proxmox installed on ZFS.
+Check what this host has before applying:
+```bash
+nproc; free -g; pvesm status
+```
+With the A380 passed through, the VM's RAM is **locked for as long as it
+runs** (PCI passthrough can't use ballooning or overcommit), so budget it
+against the host's physical RAM: leave about 1.5–2 GB for Proxmox itself,
+the ZFS ARC cap below, and a little headroom. Leave 1–2 CPU threads for the
+host (ZFS, `virtiofsd`).
+
+Put the values in the host's `.env` (the scripts read `.env` before applying
+their defaults), so every run uses them. The owner's host (8 threads, 16 GB
+RAM, Proxmox on ext4/LVM) uses:
+```bash
+# /root/home-media-server/.env on the Proxmox host
+VM_STORAGE=local-lvm
+VM_CORES=6
+VM_MEMORY=10240
+ISO=local:iso/debian-13.7.0-amd64-netinst.iso
+```
+10 GB is enough for the planned stack (Jellyfin only runs while being
+evaluated). After a RAM upgrade, raise it with `qm set 200 --memory <MB>`.
+
+Cap the ZFS ARC (the pool's RAM cache) so it doesn't compete with the VM's
+locked memory. On a 16 GB host, 2 GB is a good cap; raise it if the host has
+RAM to spare:
+```bash
+echo "options zfs zfs_arc_max=$((2*1024*1024*1024))" > /etc/modprobe.d/zfs.conf
+update-initramfs -u -k all
+echo $((2*1024*1024*1024)) > /sys/module/zfs/parameters/zfs_arc_max   # apply now, no reboot
+cat /sys/module/zfs/parameters/zfs_arc_max
+```
+Expected output: `2147483648`.
 
 Apply it:
 
@@ -498,6 +636,10 @@ scsi0: local-zfs:vm-200-disk-0,iothread=1,discard=on,ssd=1
 virtiofs0: media-data,cache=auto
 ```
 (Representative; `hostpci0` and `virtiofs0` are the lines that matter.)
+
+If `--apply` stops part-way (e.g. `qm create` succeeded but a `qm set` line
+failed), a plain re-run refuses with `VMID 200 already exists`. See
+"`20-create-vm.sh` stopped half-way" in Troubleshooting below.
 
 **GUI alternative** for step 4, if you prefer clicking through the web UI
 instead of running the script:
@@ -533,12 +675,66 @@ among the group members.)
 - Confirm `/etc/modprobe.d/vfio.conf` has the `softdep i915 pre: vfio-pci`
   and `softdep xe pre: vfio-pci` lines (both drivers exist on modern
   kernels; DG2 cards can bind to either depending on kernel version).
-- Confirm `update-initramfs -u -k all` actually ran (it only runs when
-  `10-iommu-vfio.sh` detected a change — re-run it; if it reports
-  `no changes needed`, the files are already correct and the initramfs is
-  stale from before this run; force a rebuild manually).
+- Confirm `update-initramfs -u -k all` actually ran. It only runs when
+  `10-iommu-vfio.sh` detected a change, so if it reports `no changes needed`
+  the files are correct but the initramfs may be stale. Force a rebuild
+  (see the next entry).
 - Reboot again — `softdep` ordering only takes effect from the *next* boot
   using the rebuilt initramfs.
+
+**`10-iommu-vfio.sh --apply` failed during `update-initramfs`,
+`proxmox-boot-tool refresh` or `update-grub`.** The script stops with
+`'<command>' failed; ... re-run: FORCE_REFRESH=1 ...`. Both refreshes run
+last, after every config file is written, so a plain re-run would see the
+files as already correct and skip the refresh that failed. Fix the cause the
+command printed (a full `/boot` or ESP is common), then re-run with
+`FORCE_REFRESH=1`, which re-runs both refreshes regardless of file state:
+```bash
+FORCE_REFRESH=1 scripts/host/10-iommu-vfio.sh           # dry-run: shows what it will re-run
+FORCE_REFRESH=1 scripts/host/10-iommu-vfio.sh --apply
+reboot
+```
+`FORCE_REFRESH` is environment only (ignored in `.env`). The same thing by
+hand, in the same order, on a systemd-boot host (`/etc/kernel/cmdline`
+exists; the Proxmox default on ZFS root):
+```bash
+update-initramfs -u -k all
+proxmox-boot-tool refresh
+```
+or on a GRUB host (`/etc/default/grub`):
+```bash
+update-initramfs -u -k all
+update-grub
+```
+
+**`10-iommu-vfio.sh` says `has no double-quoted GRUB_CMDLINE_LINUX_DEFAULT`
+or `edit of ... did not take effect`.** The script only edits the
+standard form `GRUB_CMDLINE_LINUX_DEFAULT="..."` and re-reads the file
+after editing it. Change the line in `/etc/default/grub` to that form
+(e.g. `GRUB_CMDLINE_LINUX_DEFAULT="quiet"`, double quotes, no trailing
+comment), or add `intel_iommu=on iommu=pt` inside the quotes by hand, then
+re-run the script.
+
+**`20-create-vm.sh` stopped half-way.** If `qm create` succeeded but a
+later `qm set --hostpci0` or `--virtiofs0` failed, every plain re-run
+refuses with `VMID 200 already exists`. Fix the cause first (the failing
+command's error; e.g. a wrong `GPU_PCI` or a missing directory mapping),
+then pick one:
+- **Resume** (keeps the VM): `RESUME=1` skips `qm create` for an existing
+  VMID and only runs the `qm set` lines whose setting is missing from
+  `qm config`. It refuses unless that VM is named `VM_NAME` (`media-01`),
+  so it never modifies some other VM that happens to use the VMID, and
+  warns if an existing `hostpci0` doesn't point at the A380:
+  ```bash
+  RESUME=1 scripts/host/20-create-vm.sh           # dry-run: shows what's left
+  RESUME=1 scripts/host/20-create-vm.sh --apply
+  ```
+  Or run the remaining `qm set` lines from the dry-run output by hand.
+- **Start over** (the VM has no OS installed yet, so nothing is lost):
+  ```bash
+  qm destroy 200
+  scripts/host/20-create-vm.sh --apply
+  ```
 
 **The guest's i915 driver fails to initialize the GPU** (blank/black
 console, or `dmesg` in the guest shows i915 errors). This is the scenario
@@ -551,19 +747,23 @@ qm set 200 --hostpci0 0000:03:00.0,pcie=1,x-vga=1
 `x-vga=1` tells Proxmox to treat the A380 as the VM's primary display
 adapter, which some Intel GPUs require to initialize correctly under KVM.
 
-**Resizable BAR not actually enabled**, despite the BIOS toggle. Confirm on
-the host:
+**Checking Resizable BAR.** See what BAR size the card actually got:
 ```bash
-lspci -vv -s 0000:03:00.0 | grep -i 'resizable'
+lspci -vv -s 0000:03:00.0 | grep -i -A2 'resizable bar'
+lspci -vv -s 0000:03:00.0 | grep -i 'region 2'
 ```
-Expected output:
+Output on the owner's host (no ReBAR option in the BIOS):
 ```
-		Resizable BAR: bit 0 (256MB) supported, bit 14 (256GB) enabled
+        Capabilities: [420 v1] Physical Resizable BAR
+                BAR 2: current size: 256MB, supported: 256MB 512MB 1GB 2GB 4GB 8GB
+        Region 2: Memory at d0000000 (64-bit, prefetchable) [size=256M]
 ```
-(This is what a host with ReBAR correctly enabled prints.) If nothing
-prints, or the enabled bit doesn't match a supported size, re-check the
-BIOS setting — some boards only expose ReBAR when CSM/legacy boot is fully
-disabled.
+With ReBAR active, `current size` shows a larger value (up to `8GB`) and
+Region 2 sits above 4 GB. If your BIOS has the options but the size is still
+256MB, check that Above 4G Decoding is saved as enabled and that CSM/legacy
+boot is fully off. If the BIOS has no such options, continue: ReBAR is
+optional for this build (see section 1), and `verify.sh`'s `vaapi-*` checks
+are what confirm the encoders work.
 
 **Proxmox VE older than 8.4.** `20-create-vm.sh` refuses:
 ```

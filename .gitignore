@@ -3,3 +3,8 @@ secrets/*
 !secrets/.gitkeep
 *.log
 .DS_Store
+# Old-stack migration captures: contain live secrets (Twingate tokens, VPN
+# keys, *arr API keys). Never commit them; see runbook 01 section 1a step 0.
+_inspect.json
+_compose-resolved.yml
+*.tar.zst

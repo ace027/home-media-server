@@ -18,6 +18,14 @@ Creates <dir> and writes executable stub commands into it: zfs, zpool,
 lspci, qm, pvesh, pveversion, hostname, pvesm. Each stub appends its
 invocation (command name + args) to <dir>/calls.log. Prepend <dir> to PATH
 before running a host script against these stubs.
+
+Stub behavior can be changed at run time with these environment variables:
+  STUB_QM_CONFIG=<text>       qm status succeeds (the VM exists) and qm config
+                              prints <text>. Unset: the VM does not exist.
+  STUB_DIR_MAPPING=<entries>  pvesh get /cluster/mapping/dir/<id> succeeds and
+                              prints a JSON object whose "map" array holds the
+                              ;-separated <entries> (e.g. node=pve,path=/tank/data).
+                              Unset: the mapping does not exist.
 EOF
 }
 
@@ -121,9 +129,18 @@ esac
 write_stub qm '
 case "$1" in
   status)
+    if [[ -n "${STUB_QM_CONFIG:-}" ]]; then
+      echo "status: stopped"
+      exit 0
+    fi
     id="$2"
     echo "Configuration file '"'"'nodes/pve/qemu-server/${id}.conf'"'"' does not exist" >&2
     exit 2
+    ;;
+  config)
+    [[ -n "${STUB_QM_CONFIG:-}" ]] || exit 2
+    printf "%s\n" "$STUB_QM_CONFIG"
+    exit 0
     ;;
   *)
     exit 0
@@ -134,7 +151,15 @@ esac
 write_stub pvesh '
 case "$*" in
   "get /cluster/mapping/dir/"*)
-    exit 1
+    [[ -n "${STUB_DIR_MAPPING:-}" ]] || exit 1
+    # Same shape as real PVE: {"map": ["node=pve,path=/tank/data", ...], ...}
+    entries=""
+    IFS=";" read -r -a maps <<<"$STUB_DIR_MAPPING"
+    for m in "${maps[@]}"; do
+      entries+="${entries:+,}\"$m\""
+    done
+    printf "{\"description\":\"\",\"digest\":\"0\",\"id\":\"%s\",\"map\":[%s]}\n" "${2##*/}" "$entries"
+    exit 0
     ;;
   *)
     exit 0

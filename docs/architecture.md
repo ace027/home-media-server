@@ -1,7 +1,7 @@
 # Architecture
 
 ## Overview
-home-media-server is a GitOps Docker Compose repository for a home media platform running on a single Proxmox host. A Debian 13 VM with an Intel Arc A380 passed through runs every container. Compose stack files are split by domain (edge, media, arr, download, transcode, ops) and joined at the root with `include:`. Family members request titles through Seerr, the *arr apps fetch them via SABnzbd over Usenet, and Plex (primary) or Jellyfin (backup) serve the result. Traefik and Authentik handle public access for Jellyfin/Seerr/Authentik, Plex uses its own remote access on port 32400, and every admin UI is reachable only through Twingate. FileFlows re-encodes the library to AV1 on the Arc A380 during an off-peak window. Everything is reproducible from this repo except secrets, which are never committed.
+home-media-server is a GitOps Docker Compose repository for a home media platform running on a single Proxmox host. A Debian 13 VM with an Intel Arc A380 passed through runs every container. Compose stack files are split by domain (edge, media, arr, download, transcode, ops) and joined at the root with `include:`. Family members request titles through Seerr, the *arr apps fetch them via SABnzbd over Usenet, and Plex serves the result (Jellyfin can be started on demand to evaluate it as a replacement). Traefik and Authentik handle public access for Seerr/Authentik, Plex uses its own remote access on port 32400, and every admin UI is reachable only through Twingate. FileFlows re-encodes the library to AV1 on the Arc A380 during an off-peak window. Everything is reproducible from this repo except secrets, which are never committed.
 
 ```
                      Proxmox host (ZFS pool "tank")
@@ -32,7 +32,7 @@ home-media-server is a GitOps Docker Compose repository for a home media platfor
 compose.yaml            # root Compose file; include: of stacks/*.yaml
 stacks/_common.yaml      # shared `base` service template, pulled in via extends
 stacks/edge.yaml         # traefik, authentik, crowdsec, cloudflare-ddns, twingate-connector (Phase 3)
-stacks/media.yaml        # plex, jellyfin, seerr, tautulli (Phase 2)
+stacks/media.yaml        # plex, seerr, tautulli; jellyfin behind the optional `jellyfin` profile (Phase 2)
 stacks/arr.yaml          # prowlarr, sonarr(-anime, -4k), radarr(-4k), lidarr, bazarr, recyclarr, maintainerr (Phases 2, 4)
 stacks/download.yaml     # sabnzbd (Phase 2)
 stacks/transcode.yaml    # fileflows (Phase 4)
@@ -103,7 +103,7 @@ Only two ports are forwarded on the router, straight to the VM:
 | Service | Hostname | Exposure | Auth |
 |---------|----------|----------|------|
 | Plex | `plex.<domain>` | Direct, port 32400/tcp forwarded (Plex's own remote access) | Plex account |
-| Jellyfin | `jellyfin.<domain>` | Public via Traefik on 443 | Jellyfin login (Authentik OIDC where supported) |
+| Jellyfin *(only if adopted after evaluation)* | `jellyfin.<domain>` | Not exposed while under evaluation (LAN/Twingate only); public via Traefik on 443 if adopted | Jellyfin login (Authentik OIDC if adopted) |
 | Seerr | `requests.<domain>` | Public via Traefik on 443 | Plex login |
 | Authentik | `auth.<domain>` | Public via Traefik on 443 | MFA enforced for admins |
 | All admin UIs (*arr, SABnzbd, FileFlows, Homepage, Uptime Kuma, Traefik dashboard, etc.) | `*.int.<domain>` | **Twingate only** | Traefik `lan-only` ipAllowList + Authentik forward-auth + app auth |

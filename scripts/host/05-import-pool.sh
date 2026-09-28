@@ -3,11 +3,19 @@ set -Eeuo pipefail
 # shellcheck source=scripts/lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 
+# FORCE_IMPORT and FIX_OWNERSHIP are deliberately environment-only: they are
+# assigned before load_env, so a stray line in .env can never turn on a
+# forced import or a recursive chown.
+FORCE_IMPORT="${FORCE_IMPORT:-0}"
+FIX_OWNERSHIP="${FIX_OWNERSHIP:-0}"
+
+# .env next, then the remaining defaults, so .env values are not masked.
+load_env
 POOL="${POOL:-tank}"
 SOURCE_POOL="${SOURCE_POOL:-$POOL}"
-FORCE_IMPORT="${FORCE_IMPORT:-0}"
 MEDIA_DATASET="${MEDIA_DATASET:-}"
-FIX_OWNERSHIP="${FIX_OWNERSHIP:-0}"
+PUID="${PUID:-1000}"
+PGID="${PGID:-1000}"
 
 usage() {
   cat <<EOF
@@ -24,10 +32,12 @@ Usage: 05-import-pool.sh [--apply] [--help]
 Environment variables (defaults):
   POOL=$POOL                 Pool name on this (new) host.
   SOURCE_POOL=\$POOL           Pool name it had on the old server.
-  FORCE_IMPORT=$FORCE_IMPORT                 Set to 1 to pass -f to zpool import.
+  FORCE_IMPORT=$FORCE_IMPORT                 Set to 1 to pass -f to zpool import
+                               (environment only; ignored in .env).
   MEDIA_DATASET=              Existing dataset (e.g. $POOL/media) to rename to
                                $POOL/data.
-  FIX_OWNERSHIP=$FIX_OWNERSHIP               Set to 1 to chown/chmod mismatched files.
+  FIX_OWNERSHIP=$FIX_OWNERSHIP               Set to 1 to chown/chmod mismatched files
+                               (environment only; ignored in .env).
   PUID=1000                   Owner uid to enforce under $POOL/data.
   PGID=1000                   Owner gid to enforce under $POOL/data.
 
@@ -37,12 +47,12 @@ EOF
 }
 
 parse_common_args "$@"
-load_env
+require_match FORCE_IMPORT "$FORCE_IMPORT" '^[01]$' "0 or 1"
+require_match FIX_OWNERSHIP "$FIX_OWNERSHIP" '^[01]$' "0 or 1"
+require_match PUID "$PUID" '^[0-9]+$' "a numeric uid"
+require_match PGID "$PGID" '^[0-9]+$' "a numeric gid"
 require_root
 require_cmd zpool zfs
-
-PUID="${PUID:-1000}"
-PGID="${PGID:-1000}"
 
 # --- 1: import (skipped if already imported) --------------------------------
 if zpool list -H -o name "$POOL" >/dev/null 2>&1; then
@@ -54,7 +64,7 @@ else
   fi
 
   import_args=(zpool import)
-  if [[ $FORCE_IMPORT -eq 1 ]]; then
+  if [[ "$FORCE_IMPORT" == "1" ]]; then
     log_warn "-f import is only safe once the old server no longer uses the pool"
     import_args+=(-f)
   fi
@@ -118,13 +128,21 @@ fi
 # --- 4: ownership --------------------------------------------------------------
 if zfs list -H -o name "$POOL/data" >/dev/null 2>&1; then
   mnt="$(zfs get -H -o value mountpoint "$POOL/data" 2>/dev/null || true)"
-  if [[ -n "$mnt" && "$mnt" != "none" && "$mnt" != "legacy" ]]; then
+  mounted="$(zfs get -H -o value mounted "$POOL/data" 2>/dev/null || true)"
+  if [[ -z "$mnt" || "$mnt" == "none" || "$mnt" == "legacy" ]]; then
+    log_warn "$POOL/data has no usable mountpoint ($mnt); ownership not checked"
+  elif [[ "$mounted" != "yes" || ! -d "$mnt" ]]; then
+    log_warn "$POOL/data not mounted at $mnt; ownership not checked (zfs mount $POOL/data, then re-run)"
+  else
     first="$(find "$mnt" -xdev \( ! -uid "$PUID" -o ! -gid "$PGID" \) -print -quit 2>/dev/null || true)"
     if [[ -n "$first" ]]; then
       log_warn "found files under $mnt not owned by $PUID:$PGID (e.g. $first)"
-      if [[ $FIX_OWNERSHIP -eq 1 ]]; then
+      if [[ "$FIX_OWNERSHIP" == "1" ]]; then
         run chown -R "$PUID:$PGID" "$mnt"
         run chmod -R u=rwX,g=rwX,o=rX "$mnt"
+        if [[ $APPLY -eq 1 ]]; then
+          log_info "ownership fixed: $mnt is now $PUID:$PGID (re-run without --apply to confirm 'ownership OK')"
+        fi
       else
         log_info "run: chown -R $PUID:$PGID $mnt"
         log_info "run: chmod -R u=rwX,g=rwX,o=rX $mnt"

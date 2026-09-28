@@ -3,6 +3,12 @@ set -Eeuo pipefail
 # shellcheck source=scripts/lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 
+# FORCE_REFRESH is deliberately environment-only (assigned before load_env):
+# it is a one-off recovery switch, not configuration.
+FORCE_REFRESH="${FORCE_REFRESH:-0}"
+
+# .env first, then defaults, so .env values are not masked by the defaults.
+load_env
 GPU_PCI="${GPU_PCI:-}"
 GPU_ID="${GPU_ID:-8086:56a5}"
 AUDIO_ID="${AUDIO_ID:-8086:4f92}"
@@ -13,8 +19,9 @@ usage() {
 Configure IOMMU and bind the Intel Arc A380 (and its audio function) to
 vfio-pci, so it can be passed through to the media VM. Edits the kernel
 cmdline (systemd-boot or GRUB, whichever is present), writes
-/etc/modules-load.d/vfio.conf and /etc/modprobe.d/vfio.conf, and rebuilds
-the initramfs if anything changed.
+/etc/modules-load.d/vfio.conf and /etc/modprobe.d/vfio.conf, then rebuilds
+the initramfs (if a vfio file changed) and refreshes the bootloader (if the
+cmdline changed).
 
 Dry-run by default: prints the commands and file changes it would make.
 Pass --apply to actually make them; --apply requires root. A reboot is
@@ -28,12 +35,26 @@ Environment variables (defaults):
                             resolve an ambiguous/failed detection.
   GPU_ID=$GPU_ID           PCI vendor:device ID of the Arc A380.
   AUDIO_ID=$AUDIO_ID           PCI vendor:device ID of the A380's audio function.
+  FORCE_REFRESH=$FORCE_REFRESH           Set to 1 to re-run both refreshes
+                            (update-initramfs and the bootloader refresh)
+                            regardless of file state (recovery after a
+                            failed refresh; environment only, ignored in .env).
   SYSROOT=<empty>           Root prefix for system files (for testing).
 EOF
 }
 
 parse_common_args "$@"
-load_env
+# Hex IDs/addresses are compared lowercase (as lspci and sysfs print them).
+GPU_ID="${GPU_ID,,}"
+GPU_PCI="${GPU_PCI,,}"
+AUDIO_ID="${AUDIO_ID,,}"
+require_match GPU_ID "$GPU_ID" '^[0-9a-f]{4}:[0-9a-f]{4}$' "vendor:device in hex, e.g. 8086:56a5"
+if [[ -n "$GPU_PCI" ]]; then
+  require_match GPU_PCI "$GPU_PCI" '^([0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$' "a PCI address, e.g. 0000:03:00.0"
+fi
+require_match AUDIO_ID "$AUDIO_ID" '^[0-9a-f]{4}:[0-9a-f]{4}$' "vendor:device in hex, e.g. 8086:4f92"
+require_match FORCE_REFRESH "$FORCE_REFRESH" '^[01]$' "0 or 1"
+require_safe_path SYSROOT "$SYSROOT" 1
 require_root
 require_cmd lspci
 
@@ -91,7 +112,12 @@ esac
 log_info "CPU vendor: $vendor -> params: $IOMMU_PARAMS"
 
 # --- 5: bootloader cmdline ----------------------------------------------
+# CHANGED tracks the vfio files (-> update-initramfs); BOOT_CHANGED tracks the
+# kernel cmdline (-> bootloader refresh). Both refreshes run in section 8,
+# after every file is written, so a failed refresh can always be recovered
+# with FORCE_REFRESH=1 (which re-runs both regardless of file state).
 CHANGED=0
+BOOT_CHANGED=0
 
 missing_params() {
   # Prints the params (from IOMMU_PARAMS) not already present as whole
@@ -105,28 +131,60 @@ missing_params() {
   done
 }
 
+grub_cmdline() {
+  # Prints the value of the first GRUB_CMDLINE_LINUX_DEFAULT line, only if
+  # it has the double-quoted form the sed edit below can handle.
+  local line re='^GRUB_CMDLINE_LINUX_DEFAULT="(.*)"$'
+  line="$(grep -m1 '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub_file" || true)"
+  [[ "$line" =~ $re ]] || return 1
+  printf '%s' "${BASH_REMATCH[1]}"
+}
+
+refresh_hint="the config files are already written, so a plain re-run would skip this refresh. Fix the cause, then re-run: FORCE_REFRESH=1 scripts/host/10-iommu-vfio.sh --apply (FORCE_REFRESH=1 re-runs both refreshes regardless of file state; see runbook 01, section 5)"
+
+run_refresh() {
+  # Runs a boot/initramfs refresh command; on failure, dies with a hint on
+  # how to recover instead of leaving a half-applied state unexplained.
+  if ! run "$@"; then
+    die "'$*' failed; $refresh_hint"
+  fi
+}
+
+verify_applied() {
+  # After --apply, re-checks that <cmdline> now contains every IOMMU param.
+  local file="$1" cmdline="$2" still
+  [[ $APPLY -eq 1 ]] || return 0
+  still="$(missing_params "$cmdline")"
+  still="${still% }"
+  if [[ -n "$still" ]]; then
+    die "edit of $file did not take effect (still missing: $still); add them by hand and re-run"
+  fi
+}
+
 cmdline_file="${SYSROOT}/etc/kernel/cmdline"
 grub_file="${SYSROOT}/etc/default/grub"
 
 if [[ -f "$cmdline_file" ]]; then
+  boot_refresh=(proxmox-boot-tool refresh)
   current="$(cat "$cmdline_file")"
   missing="$(missing_params "$current")"
   missing="${missing% }"
   if [[ -n "$missing" ]]; then
     run_sh "sed -i 's/\$/ ${missing}/' \"$cmdline_file\""
-    run proxmox-boot-tool refresh
-    CHANGED=1
+    verify_applied "$cmdline_file" "$(cat "$cmdline_file")"
+    BOOT_CHANGED=1
   else
     log_info "cmdline already configured"
   fi
 elif [[ -f "$grub_file" ]]; then
-  current="$(grep -m1 '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub_file" | sed -E 's/^GRUB_CMDLINE_LINUX_DEFAULT="(.*)"$/\1/')"
+  boot_refresh=(update-grub)
+  current="$(grub_cmdline)" || die "$grub_file has no double-quoted GRUB_CMDLINE_LINUX_DEFAULT=\"...\" line; edit it to that form (e.g. GRUB_CMDLINE_LINUX_DEFAULT=\"quiet\") and re-run"
   missing="$(missing_params "$current")"
   missing="${missing% }"
   if [[ -n "$missing" ]]; then
     run_sh "sed -i -E 's/^(GRUB_CMDLINE_LINUX_DEFAULT=\")(.*)(\")\$/\\1\\2 ${missing}\\3/' \"$grub_file\""
-    run update-grub
-    CHANGED=1
+    verify_applied "$grub_file" "$(grub_cmdline || true)"
+    BOOT_CHANGED=1
   else
     log_info "cmdline already configured"
   fi
@@ -157,12 +215,27 @@ if [[ "$modprobe_current" != "$modprobe_desired" ]]; then
   CHANGED=1
 fi
 
-# --- 8: rebuild initramfs if anything changed ----------------------------
-if [[ "$CHANGED" -eq 1 ]]; then
-  run update-initramfs -u -k all
+# --- 8: refresh initramfs, then bootloader (or both with FORCE_REFRESH=1) ---
+# update-initramfs runs first so that proxmox-boot-tool refresh copies the new
+# initramfs to the ESPs; for GRUB, update-grub then regenerates grub.cfg with
+# the new cmdline against the already-rebuilt initrd images.
+if [[ "$FORCE_REFRESH" == "1" ]]; then
+  log_info "FORCE_REFRESH=1: re-running initramfs and bootloader refreshes regardless of file state"
+fi
+
+if [[ "$CHANGED" -eq 1 || "$FORCE_REFRESH" == "1" ]]; then
+  run_refresh update-initramfs -u -k all
+fi
+
+if [[ "$BOOT_CHANGED" -eq 1 || "$FORCE_REFRESH" == "1" ]]; then
+  run_refresh "${boot_refresh[@]}"
+fi
+
+if [[ "$CHANGED" -eq 1 || "$BOOT_CHANGED" -eq 1 || "$FORCE_REFRESH" == "1" ]]; then
   log_warn "reboot required for the new IOMMU/vfio configuration to take effect"
   log_info "after reboot, verify with: dmesg | grep -e DMAR -e IOMMU"
   log_info "after reboot, verify with: lspci -nnk -s ${GPU_PCI} (expect: Kernel driver in use: vfio-pci)"
 else
   log_info "no changes needed; A380 ($GPU_PCI) already configured for vfio-pci"
+  log_info "if a previous --apply failed during a refresh, re-run with FORCE_REFRESH=1"
 fi
