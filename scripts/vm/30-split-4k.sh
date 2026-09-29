@@ -161,10 +161,14 @@ empty_dir() {
   [[ -d "$1" && ! -L "$1" && -z "$(find "$1" -mindepth 1 -print -quit)" ]]
 }
 
-# moved_back </data/src>: true if src exists and is not an empty dir (a
-# row whose dst is gone was then moved back by an earlier undo).
+# moved_back </data/src>: true if src is a real directory holding at least
+# one regular file (a row whose dst is gone was then moved back by an
+# earlier undo). Empty dirs, or only empty subdirs such as a "Season 01"
+# recreated by createEmptySeriesFolders, do not count.
 moved_back() {
-  exists "$(on_disk "$1")" && ! empty_dir "$(on_disk "$1")"
+  local p
+  p="$(on_disk "$1")"
+  [[ -d "$p" && ! -L "$p" && -n "$(find "$p" -type f -print -quit)" ]]
 }
 
 # The 4K test, per file (quality.quality.resolution and mediaInfo.resolution

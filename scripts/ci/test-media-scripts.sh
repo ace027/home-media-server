@@ -545,7 +545,16 @@ refute split-undo-lost 'not moving it|undo stopped at row'
   && -d "$DATA_ROOT/media/movies-4k/Unmonitored 4K Movie (2017)" ]] || fail split-undo-lost "changes despite a lost 4K folder"
 empty_dir_left() { [[ -d "$1" && -z "$(find "$1" -mindepth 1 -print -quit)" ]]; }
 empty_dir_left "$DATA_ROOT/media/movies/Big 4K Movie (2019)" || fail split-undo-lost "the empty src was touched"
-ok "undo preflight: a dst that is gone with an empty src fails as missing, with nothing changed"
+# The same with only an empty "Season 01" left in the HD series folder.
+rm -rf "$DATA_ROOT/media/movies/Big 4K Movie (2019)"
+rm -rf "$DATA_ROOT/media/tv-4k/UHD Show"
+mkdir -p "$DATA_ROOT/media/tv/UHD Show/Season 01"
+reset_stub
+run_capture env STUB_RUNNING="$SPLIT_UP" "$SPLIT" --undo "$MAN" --apply
+expect split-undo-lost 1 \
+  '\[ERROR\] undo preflight: series sonarr 1 UHD Show: /data/media/tv-4k/UHD Show is missing$' 'nothing moved'
+[[ -z "$(mutating)" && -f "$MAN" ]] || fail split-undo-lost "changes despite only empty season dirs"
+ok "undo preflight: a dst that is gone with an empty src (or only empty subdirs) fails as missing, with nothing changed"
 
 # --- 5g. prior.e ids deleted since the split (TVDB refresh) are skipped ----------
 make_library
