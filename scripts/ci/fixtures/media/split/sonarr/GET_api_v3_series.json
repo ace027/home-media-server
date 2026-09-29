@@ -1,0 +1,84 @@
+[
+  {
+    "id": 1,
+    "title": "UHD Show",
+    "tvdbId": 2001,
+    "path": "/data/media/tv/UHD Show",
+    "monitored": true,
+    "tags": [],
+    "qualityProfileId": 1,
+    "seasonFolder": true,
+    "seriesType": "standard",
+    "seasons": [
+      {
+        "seasonNumber": 0,
+        "monitored": false
+      },
+      {
+        "seasonNumber": 1,
+        "monitored": true
+      },
+      {
+        "seasonNumber": 2,
+        "monitored": true
+      }
+    ],
+    "statistics": {
+      "episodeFileCount": 2
+    }
+  },
+  {
+    "id": 2,
+    "title": "Mixed Show",
+    "tvdbId": 2002,
+    "path": "/data/media/tv/Mixed Show",
+    "monitored": true,
+    "tags": [],
+    "qualityProfileId": 1,
+    "seasons": [
+      {
+        "seasonNumber": 1,
+        "monitored": true
+      }
+    ],
+    "statistics": {
+      "episodeFileCount": 2
+    }
+  },
+  {
+    "id": 3,
+    "title": "HD Show",
+    "tvdbId": 2003,
+    "path": "/data/media/tv/HD Show",
+    "monitored": true,
+    "tags": [],
+    "qualityProfileId": 1,
+    "seasons": [
+      {
+        "seasonNumber": 1,
+        "monitored": true
+      }
+    ],
+    "statistics": {
+      "episodeFileCount": 1
+    }
+  },
+  {
+    "id": 4,
+    "title": "Empty Show",
+    "tvdbId": 2004,
+    "path": "/data/media/tv/Empty Show",
+    "monitored": true,
+    "tags": [],
+    "qualityProfileId": 1,
+    "seasons": [
+      {
+        "seasonNumber": 1,
+        "monitored": true
+      }
+    ],
+    "statistics": {
+      "episodeFileCount": 0
+    }
+  }
+]

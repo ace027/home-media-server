@@ -1,0 +1,21 @@
+[
+  {
+    "id": 114,
+    "relativePath": "file-114.mkv",
+    "size": 1000,
+    "quality": {
+      "quality": {
+        "id": 19,
+        "name": "Bluray-2160p",
+        "resolution": 2160
+      },
+      "revision": {
+        "version": 1
+      }
+    },
+    "mediaInfo": {
+      "resolution": "3840x2160",
+      "videoCodec": "x265"
+    }
+  }
+]

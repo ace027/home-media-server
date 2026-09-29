@@ -1,0 +1,84 @@
+{
+  "MediaContainer": {
+    "size": 6,
+    "title1": "Plex Library",
+    "Directory": [
+      {
+        "key": "1",
+        "type": "movie",
+        "title": "Movies",
+        "agent": "tv.plex.agents.movie",
+        "Location": [
+          {
+            "id": 1,
+            "path": "/data/media/movies"
+          },
+          {
+            "id": 2,
+            "path": "/data/media/anime-movies"
+          }
+        ]
+      },
+      {
+        "key": "2",
+        "type": "show",
+        "title": "TV Shows",
+        "agent": "tv.plex.agents.series",
+        "Location": [
+          {
+            "id": 3,
+            "path": "/data/media/tv"
+          }
+        ]
+      },
+      {
+        "key": "3",
+        "type": "show",
+        "title": "Anime TV",
+        "agent": "tv.plex.agents.series",
+        "Location": [
+          {
+            "id": 4,
+            "path": "/data/media/anime-tv/"
+          }
+        ]
+      },
+      {
+        "key": "4",
+        "type": "artist",
+        "title": "Music",
+        "agent": "tv.plex.agents.music",
+        "Location": [
+          {
+            "id": 5,
+            "path": "/data/media/music"
+          }
+        ]
+      },
+      {
+        "key": "5",
+        "type": "movie",
+        "title": "Movies 4K",
+        "agent": "tv.plex.agents.movie",
+        "Location": [
+          {
+            "id": 6,
+            "path": "/data/media/movies-4k"
+          }
+        ]
+      },
+      {
+        "key": "6",
+        "type": "show",
+        "title": "TV 4K",
+        "agent": "tv.plex.agents.series",
+        "Location": [
+          {
+            "id": 7,
+            "path": "/data/media/tv-4k"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+[
+  {
+    "id": 0,
+    "name": "Radarr",
+    "hostname": "radarr",
+    "port": 7878,
+    "useSsl": false,
+    "baseUrl": "",
+    "is4k": false,
+    "isDefault": true,
+    "activeProfileId": 1,
+    "activeDirectory": "/data/media/movies",
+    "syncEnabled": false
+  },
+  {
+    "id": 1,
+    "name": "Radarr 4K",
+    "hostname": "radarr-4k",
+    "port": 7878,
+    "useSsl": false,
+    "baseUrl": "",
+    "is4k": true,
+    "isDefault": true,
+    "activeProfileId": 4,
+    "activeDirectory": "/data/media/movies-4k",
+    "syncEnabled": false
+  }
+]

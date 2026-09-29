@@ -18,6 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install jq, sqlite3 and zstd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq sqlite3 zstd
+
       - name: Copy env
         run: cp .env.example .env
 
@@ -25,7 +30,10 @@ jobs:
         run: docker compose config -q
 
       - name: Check pinned images
-        run: scripts/ci/check-pinned-images.sh
+        run: COMPOSE_PROFILES=jellyfin scripts/ci/check-pinned-images.sh
+
+      - name: Check minimum image versions
+        run: scripts/ci/check-min-versions.sh
 
       - name: Pinned-images check rejects unpinned images
         run: |
@@ -45,13 +53,18 @@ jobs:
           sudo apt-get install -y shellcheck
 
       - name: Shellcheck
-        run: shellcheck -x scripts/lib/common.sh scripts/mkdirs.sh scripts/host/*.sh scripts/vm/*.sh scripts/ci/*.sh
+        run: shellcheck -x scripts/lib/*.sh scripts/mkdirs.sh scripts/host/*.sh scripts/vm/*.sh scripts/ci/*.sh
 
       - name: Install yamllint
         run: pip install yamllint
 
       - name: Yamllint
         run: yamllint -s .
+
+      - name: Script tests
+        run: |
+          set -euo pipefail
+          for t in scripts/ci/test-*.sh; do echo "== $t"; bash "$t"; done
 
       - name: Sandbox mkdirs + verify (SKIP_HW)
         run: |

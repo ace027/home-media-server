@@ -1,0 +1,27 @@
+{
+  "MediaContainer": {
+    "size": 1,
+    "Metadata": [
+      {
+        "title": "Movie A",
+        "type": "movie",
+        "User": {
+          "title": "owner"
+        },
+        "Player": {
+          "product": "Plex Web",
+          "state": "playing"
+        },
+        "TranscodeSession": {
+          "key": "/transcode/sessions/synthetic",
+          "videoDecision": "transcode",
+          "audioDecision": "copy",
+          "transcodeHwRequested": true,
+          "transcodeHwDecoding": "vaapi",
+          "transcodeHwEncoding": "vaapi",
+          "transcodeHwFullPipeline": true
+        }
+      }
+    ]
+  }
+}

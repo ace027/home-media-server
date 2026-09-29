@@ -1,0 +1,4 @@
+kind	instance	id	title	src	dst	files	action
+movie	radarr	22	4K Movie	/data/media/movies/4K Movie (2020)	/data/media/movies-4k/4K Movie (2020)	1	move
+series	sonarr	4	4K Show	/data/media/tv/4K Show	/data/media/tv-4k/4K Show	6	move
+series	sonarr	3	Mixed Show	/data/media/tv/Mixed Show	/data/media/tv-4k/Mixed Show	4	skip-mixed

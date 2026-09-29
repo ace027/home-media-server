@@ -1,0 +1,38 @@
+# Temporary admin UI ports bound to the VM's LAN IP for Twingate access.
+# Enabled via COMPOSE_FILE in .env. Phase 3 deletes this file.
+# Plex's 32400 is published by stacks/media.yaml and is not listed here.
+services:
+  sabnzbd:
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:8080:8080"
+  prowlarr:
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:9696:9696"
+  sonarr:
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:8989:8989"
+  sonarr-anime:
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:8990:8989"
+  sonarr-4k:
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:8991:8989"
+  radarr:
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:7878:7878"
+  radarr-4k:
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:7879:7878"
+  lidarr:
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:8686:8686"
+  seerr:
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:5055:5055"
+  tautulli:
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:8181:8181"
+  jellyfin:
+    profiles: ["jellyfin"]
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:8096:8096"

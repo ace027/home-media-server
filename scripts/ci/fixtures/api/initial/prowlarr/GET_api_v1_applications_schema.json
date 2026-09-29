@@ -1,0 +1,163 @@
+[
+  {
+    "syncLevel": "disabled",
+    "name": "",
+    "implementationName": "Sonarr",
+    "implementation": "Sonarr",
+    "configContract": "SonarrSettings",
+    "tags": [],
+    "presets": [],
+    "fields": [
+      {
+        "order": 0,
+        "name": "prowlarrUrl",
+        "value": "http://localhost:9696",
+        "privacy": "normal"
+      },
+      {
+        "order": 1,
+        "name": "baseUrl",
+        "value": "http://localhost:8989",
+        "privacy": "normal"
+      },
+      {
+        "order": 2,
+        "name": "apiKey",
+        "privacy": "apiKey"
+      },
+      {
+        "order": 3,
+        "name": "syncCategories",
+        "value": [
+          5000,
+          5010,
+          5020,
+          5030,
+          5040,
+          5045,
+          5050,
+          5090
+        ],
+        "privacy": "normal"
+      },
+      {
+        "order": 4,
+        "name": "animeSyncCategories",
+        "value": [
+          5070
+        ],
+        "privacy": "normal"
+      },
+      {
+        "order": 5,
+        "name": "syncAnimeStandardFormatSearch",
+        "value": false,
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "syncLevel": "disabled",
+    "name": "",
+    "implementationName": "Radarr",
+    "implementation": "Radarr",
+    "configContract": "RadarrSettings",
+    "tags": [],
+    "presets": [],
+    "fields": [
+      {
+        "order": 0,
+        "name": "prowlarrUrl",
+        "value": "http://localhost:9696",
+        "privacy": "normal"
+      },
+      {
+        "order": 1,
+        "name": "baseUrl",
+        "value": "http://localhost:7878",
+        "privacy": "normal"
+      },
+      {
+        "order": 2,
+        "name": "apiKey",
+        "privacy": "apiKey"
+      },
+      {
+        "order": 3,
+        "name": "syncCategories",
+        "value": [
+          2000,
+          2010,
+          2020,
+          2030,
+          2040,
+          2045,
+          2050,
+          2060,
+          2070,
+          2080,
+          2090
+        ],
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "syncLevel": "disabled",
+    "name": "",
+    "implementationName": "Lidarr",
+    "implementation": "Lidarr",
+    "configContract": "LidarrSettings",
+    "tags": [],
+    "presets": [],
+    "fields": [
+      {
+        "order": 0,
+        "name": "prowlarrUrl",
+        "value": "http://localhost:9696",
+        "privacy": "normal"
+      },
+      {
+        "order": 1,
+        "name": "baseUrl",
+        "value": "http://localhost:8686",
+        "privacy": "normal"
+      },
+      {
+        "order": 2,
+        "name": "apiKey",
+        "privacy": "apiKey"
+      },
+      {
+        "order": 3,
+        "name": "syncCategories",
+        "value": [
+          3000,
+          3010,
+          3030,
+          3040,
+          3050,
+          3060
+        ],
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "syncLevel": "disabled",
+    "name": "",
+    "implementationName": "Readarr",
+    "implementation": "Readarr",
+    "configContract": "ReadarrSettings",
+    "tags": [],
+    "presets": [],
+    "fields": [
+      {
+        "order": 0,
+        "name": "prowlarrUrl",
+        "value": "http://localhost:9696",
+        "privacy": "normal"
+      }
+    ]
+  }
+]

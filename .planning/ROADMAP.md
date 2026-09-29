@@ -3,7 +3,7 @@
 ## Phases
 
 - [x] Phase 1: Host & Repo Foundation (5 plans)
-- [ ] Phase 2: Core Media Automation (3 plans)
+- [x] Phase 2: Core Media Automation (4 plans)
 - [ ] Phase 3: Edge & Secure Access (3 plans)
 - [ ] Phase 4: Quality Automation & AV1 (3 plans)
 - [ ] Phase 5: Observability & Resilience (3 plans)
@@ -30,12 +30,12 @@
 **Success Criteria**:
 - [ ] SABnzbd, Prowlarr, Sonarr, Sonarr-Anime, Sonarr-4K, Radarr, Radarr-4K, Lidarr, Plex, Seerr and Tautulli are all healthy (`docker compose ps`); Jellyfin is defined behind the `jellyfin` Compose profile and starts on demand (`docker compose --profile jellyfin up -d`)
 - [ ] Prowlarr syncs its (Usenet-only) indexers to all 6 *arr instances (checked via API); the old torrent indexers and the qBittorrent/NZBGet download clients are removed
-- [ ] A test request in Seerr (HD, 4K, anime) lands in the correct instance, root folder and SAB category, and is imported as a hardlink (same inode)
+- [ ] A test request in Seerr (HD, 4K, anime) lands in the correct instance, root folder and SAB category, and is imported as a hardlink or atomic move (same inode)
 - [ ] Plex shows hardware transcoding (hw) on a forced transcode; Jellyfin, when started for evaluation, does too
 - [ ] Old app configs from `/tank/migration/old-docker-<date>.tar.zst` (archived from the old Ubuntu VM's `/docker`; Sonarr/Radarr/Plex/SAB) are migrated onto the same or newer image versions with paths remapped to `/data/...`, keeping settings, history and Plex watch state
 - [ ] 4K titles mixed into `media/movies` and `media/tv` are identified and moved to `movies-4k`/`tv-4k` under Radarr-4K/Sonarr-4K
 - [ ] The existing library migrated from the old SSD pool is adopted by Sonarr/Radarr/Lidarr (root folders under `/data/media`) with no re-downloads, and appears in Plex (and in Jellyfin when it is started)
-**Plans**: 3
+**Plans**: 4 (spec: `.planning/specs/02-core-media-automation-spec.md`)
 
 ### Phase 3: Edge & Secure Access
 **Goal**: Safe public access for Plex, Seerr and Authentik (plus Jellyfin only if it has been adopted), DDNS for the dynamic IP, and admin UIs reachable only through Twingate.
@@ -80,7 +80,7 @@
 **Requirements**: R12
 **Recommended Agents**: product-technical-writer, engineering-security-engineer, testing-qa-verification-specialist
 **Success Criteria**:
-- [ ] Authentik invite flow creates a family account; Plex shares match the rules (4K only for users with 4K/HDR-capable devices)
+- [ ] Authentik invite flow creates a family account; every family member gets all Plex libraries, including Movies 4K and TV 4K (non-4K devices transcode)
 - [ ] The one-page family guide covers installing Plex, signing in, requesting in Seerr, and recommended AV1-capable devices (Jellyfin is covered only if it has replaced Plex)
 - [ ] One family member completes request → remote watch end-to-end with no admin action (HD)
 - [ ] An exposure review confirms no admin UI is reachable publicly and all secrets are absent from git history
@@ -91,7 +91,7 @@
 | Phase | Plans | Completed | Status |
 |-------|-------|-----------|--------|
 | 1. Host & Repo Foundation | 5 | 5 | Complete |
-| 2. Core Media Automation | 3 | 0 | Not started |
+| 2. Core Media Automation | 4 | 4 | Complete (review passed; owner acceptance pending) |
 | 3. Edge & Secure Access | 3 | 0 | Not started |
 | 4. Quality Automation & AV1 | 3 | 0 | Not started |
 | 5. Observability & Resilience | 3 | 0 | Not started |

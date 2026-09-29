@@ -1,0 +1,13 @@
+[
+  {
+    "id": 1,
+    "title": "4K Show",
+    "tvdbId": 1004,
+    "path": "/data/media/tv-4k/4K Show",
+    "monitored": true,
+    "tags": [],
+    "statistics": {
+      "episodeFileCount": 6
+    }
+  }
+]

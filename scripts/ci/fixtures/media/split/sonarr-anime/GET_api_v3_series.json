@@ -1,0 +1,13 @@
+[
+  {
+    "id": 1,
+    "title": "Anime Show",
+    "tvdbId": 3001,
+    "path": "/data/media/anime-tv/Anime Show",
+    "monitored": true,
+    "tags": [],
+    "statistics": {
+      "episodeFileCount": 1
+    }
+  }
+]

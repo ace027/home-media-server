@@ -1,0 +1,116 @@
+[
+  {
+    "id": 1,
+    "enable": true,
+    "protocol": "torrent",
+    "priority": 1,
+    "removeCompletedDownloads": true,
+    "removeFailedDownloads": true,
+    "name": "qBittorrent",
+    "implementationName": "qBittorrent",
+    "implementation": "QBittorrent",
+    "configContract": "QBittorrentSettings",
+    "tags": [],
+    "fields": [
+      {
+        "order": 0,
+        "name": "host",
+        "value": "qbittorrent",
+        "privacy": "normal"
+      },
+      {
+        "order": 1,
+        "name": "port",
+        "value": 8080,
+        "privacy": "normal"
+      },
+      {
+        "order": 2,
+        "name": "username",
+        "value": "admin",
+        "privacy": "userName"
+      },
+      {
+        "order": 3,
+        "name": "password",
+        "value": "********",
+        "privacy": "password"
+      },
+      {
+        "order": 4,
+        "name": "tvCategory",
+        "value": "old-torrents",
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "enable": true,
+    "protocol": "usenet",
+    "priority": 1,
+    "removeCompletedDownloads": true,
+    "removeFailedDownloads": true,
+    "name": "SABnzbd",
+    "implementationName": "SABnzbd",
+    "implementation": "Sabnzbd",
+    "configContract": "SabnzbdSettings",
+    "tags": [],
+    "fields": [
+      {
+        "order": 0,
+        "name": "host",
+        "value": "sabnzbd",
+        "privacy": "normal"
+      },
+      {
+        "order": 1,
+        "name": "port",
+        "value": 8080,
+        "privacy": "normal"
+      },
+      {
+        "order": 2,
+        "name": "useSsl",
+        "value": false,
+        "privacy": "normal"
+      },
+      {
+        "order": 3,
+        "name": "urlBase",
+        "value": "",
+        "privacy": "normal"
+      },
+      {
+        "order": 4,
+        "name": "apiKey",
+        "value": "********",
+        "privacy": "apiKey"
+      },
+      {
+        "order": 5,
+        "name": "username",
+        "value": "",
+        "privacy": "userName"
+      },
+      {
+        "order": 6,
+        "name": "password",
+        "value": "",
+        "privacy": "password"
+      },
+      {
+        "order": 7,
+        "name": "tvCategory",
+        "value": "anime-series",
+        "privacy": "normal"
+      },
+      {
+        "order": 8,
+        "name": "recentTvPriority",
+        "value": -100,
+        "privacy": "normal"
+      }
+    ]
+  }
+]

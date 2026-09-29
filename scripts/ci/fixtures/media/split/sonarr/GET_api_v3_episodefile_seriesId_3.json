@@ -1,0 +1,21 @@
+[
+  {
+    "id": 205,
+    "relativePath": "file-205.mkv",
+    "size": 1000,
+    "quality": {
+      "quality": {
+        "id": 7,
+        "name": "Bluray-1080p",
+        "resolution": 1080
+      },
+      "revision": {
+        "version": 1
+      }
+    },
+    "mediaInfo": {
+      "resolution": "1920x1080",
+      "videoCodec": "x265"
+    }
+  }
+]

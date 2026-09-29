@@ -1,0 +1,16 @@
+[
+  {
+    "id": 1,
+    "name": "OldTorrents",
+    "protocol": "torrent",
+    "implementation": "Cardigann",
+    "enable": true
+  },
+  {
+    "id": 2,
+    "name": "NZBgeek",
+    "protocol": "usenet",
+    "implementation": "Newznab",
+    "enable": true
+  }
+]

@@ -1,0 +1,23 @@
+[
+  {
+    "id": 1,
+    "title": "Show A",
+    "path": "/data/shows/Show A",
+    "rootFolderPath": "/data/shows/",
+    "monitored": true
+  },
+  {
+    "id": 2,
+    "title": "Show B",
+    "path": "/data/shows/Show B",
+    "rootFolderPath": "/data/shows/",
+    "monitored": true
+  },
+  {
+    "id": 3,
+    "title": "Show C",
+    "path": "/data/media/tv/Show C",
+    "rootFolderPath": "/data/media/tv/",
+    "monitored": true
+  }
+]

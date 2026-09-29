@@ -1,0 +1,32 @@
+[
+  {
+    "title": "UHD Show",
+    "tvdbId": 2001,
+    "year": 2020,
+    "titleSlug": "uhd-show",
+    "folder": "UHD Show",
+    "seasonFolder": false,
+    "monitored": false,
+    "seasons": [
+      {
+        "seasonNumber": 1,
+        "monitored": true
+      },
+      {
+        "seasonNumber": 2,
+        "monitored": true
+      }
+    ],
+    "images": [],
+    "tags": []
+  },
+  {
+    "title": "UHD Show (Other)",
+    "tvdbId": 2999,
+    "year": 2021,
+    "titleSlug": "uhd-show-other",
+    "seasons": [],
+    "images": [],
+    "tags": []
+  }
+]

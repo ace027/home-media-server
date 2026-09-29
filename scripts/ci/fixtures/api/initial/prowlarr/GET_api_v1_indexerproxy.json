@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "name": "FlareSolverr",
+    "implementation": "FlareSolverr",
+    "fields": [
+      {
+        "name": "host",
+        "value": "http://flaresolverr:8191/",
+        "privacy": "normal"
+      }
+    ]
+  }
+]

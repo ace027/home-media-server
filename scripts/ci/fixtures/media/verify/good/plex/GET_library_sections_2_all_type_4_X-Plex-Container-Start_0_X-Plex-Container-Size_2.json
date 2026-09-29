@@ -1,0 +1,21 @@
+{
+  "MediaContainer": {
+    "size": 2,
+    "totalSize": 3,
+    "offset": 0,
+    "Metadata": [
+      {
+        "ratingKey": "201",
+        "type": "episode",
+        "title": "Pilot",
+        "viewCount": 1
+      },
+      {
+        "ratingKey": "202",
+        "type": "episode",
+        "title": "Second",
+        "viewCount": 1
+      }
+    ]
+  }
+}

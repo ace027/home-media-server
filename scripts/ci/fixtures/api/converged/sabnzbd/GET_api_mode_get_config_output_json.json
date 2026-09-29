@@ -1,0 +1,81 @@
+{
+  "config": {
+    "misc": {
+      "download_dir": "/data/usenet/incomplete",
+      "complete_dir": "/data/usenet/complete",
+      "host_whitelist": [
+        "oldvm.lan",
+        "oldvm",
+        "sabnzbd",
+        "@HOSTNAME@",
+        "192.168.50.16"
+      ],
+      "port": "8080"
+    },
+    "categories": [
+      {
+        "name": "*",
+        "order": 0,
+        "pp": "",
+        "script": "Default",
+        "dir": "",
+        "newzbin": "",
+        "priority": -100
+      },
+      {
+        "name": "tv",
+        "order": 1,
+        "pp": "",
+        "script": "Default",
+        "dir": "tv",
+        "newzbin": "",
+        "priority": -100
+      },
+      {
+        "name": "tv-4k",
+        "order": 2,
+        "pp": "",
+        "script": "Default",
+        "dir": "tv-4k",
+        "newzbin": "",
+        "priority": -100
+      },
+      {
+        "name": "movies",
+        "order": 3,
+        "pp": "",
+        "script": "Default",
+        "dir": "movies",
+        "newzbin": "",
+        "priority": -100
+      },
+      {
+        "name": "movies-4k",
+        "order": 4,
+        "pp": "",
+        "script": "Default",
+        "dir": "movies-4k",
+        "newzbin": "",
+        "priority": -100
+      },
+      {
+        "name": "music",
+        "order": 5,
+        "pp": "",
+        "script": "Default",
+        "dir": "music",
+        "newzbin": "",
+        "priority": -100
+      },
+      {
+        "name": "anime",
+        "order": 6,
+        "pp": "",
+        "script": "Default",
+        "dir": "anime",
+        "newzbin": "",
+        "priority": -100
+      }
+    ]
+  }
+}

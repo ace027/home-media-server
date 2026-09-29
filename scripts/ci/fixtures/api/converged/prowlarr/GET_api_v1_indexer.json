@@ -1,0 +1,9 @@
+[
+  {
+    "id": 2,
+    "name": "NZBgeek",
+    "protocol": "usenet",
+    "implementation": "Newznab",
+    "enable": true
+  }
+]

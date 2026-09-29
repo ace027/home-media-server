@@ -1,0 +1,17 @@
+{
+  "created": "2026-09-28T00:00:00Z",
+  "stage": "20260928-000000",
+  "files": {
+    "sonarr": 25,
+    "sonarr-anime": 12,
+    "radarr": 3,
+    "lidarr": 0
+  },
+  "items_with_files": {
+    "sonarr": 4,
+    "sonarr-anime": 1,
+    "radarr": 3
+  },
+  "plex_watched": 5,
+  "warnings": []
+}

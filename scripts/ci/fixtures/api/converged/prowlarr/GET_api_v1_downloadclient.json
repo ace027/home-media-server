@@ -1,0 +1,44 @@
+[
+  {
+    "id": 3,
+    "enable": true,
+    "protocol": "usenet",
+    "priority": 1,
+    "name": "SABnzbd",
+    "implementation": "Sabnzbd",
+    "configContract": "SabnzbdSettings",
+    "tags": [],
+    "fields": [
+      {
+        "name": "host",
+        "value": "sabnzbd",
+        "privacy": "normal"
+      },
+      {
+        "name": "port",
+        "value": 8080,
+        "privacy": "normal"
+      },
+      {
+        "name": "useSsl",
+        "value": false,
+        "privacy": "normal"
+      },
+      {
+        "name": "urlBase",
+        "value": "",
+        "privacy": "normal"
+      },
+      {
+        "name": "apiKey",
+        "value": "********",
+        "privacy": "apiKey"
+      },
+      {
+        "name": "category",
+        "value": "*",
+        "privacy": "normal"
+      }
+    ]
+  }
+]

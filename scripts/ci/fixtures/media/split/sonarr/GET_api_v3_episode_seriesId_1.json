@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1001,
+    "seriesId": 1,
+    "seasonNumber": 1,
+    "episodeNumber": 1,
+    "monitored": true,
+    "hasFile": true
+  },
+  {
+    "id": 1002,
+    "seriesId": 1,
+    "seasonNumber": 1,
+    "episodeNumber": 2,
+    "monitored": false,
+    "hasFile": false
+  },
+  {
+    "id": 1003,
+    "seriesId": 1,
+    "seasonNumber": 2,
+    "episodeNumber": 1,
+    "monitored": true,
+    "hasFile": true
+  }
+]

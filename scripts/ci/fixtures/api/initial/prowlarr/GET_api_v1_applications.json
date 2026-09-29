@@ -1,0 +1,97 @@
+[
+  {
+    "id": 1,
+    "name": "animesonarr",
+    "implementationName": "Sonarr",
+    "implementation": "Sonarr",
+    "configContract": "SonarrSettings",
+    "syncLevel": "fullSync",
+    "tags": [],
+    "fields": [
+      {
+        "name": "prowlarrUrl",
+        "value": "http://prowlarr:9696",
+        "privacy": "normal"
+      },
+      {
+        "name": "baseUrl",
+        "value": "http://animesonarr:8989",
+        "privacy": "normal"
+      },
+      {
+        "name": "apiKey",
+        "value": "********",
+        "privacy": "apiKey"
+      },
+      {
+        "name": "syncCategories",
+        "value": [],
+        "privacy": "normal"
+      },
+      {
+        "name": "animeSyncCategories",
+        "value": [
+          5070
+        ],
+        "privacy": "normal"
+      },
+      {
+        "name": "syncAnimeStandardFormatSearch",
+        "value": false,
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "name": "Sonarr",
+    "implementationName": "Sonarr",
+    "implementation": "Sonarr",
+    "configContract": "SonarrSettings",
+    "syncLevel": "disabled",
+    "tags": [],
+    "fields": [
+      {
+        "name": "prowlarrUrl",
+        "value": "http://prowlarr:9696",
+        "privacy": "normal"
+      },
+      {
+        "name": "baseUrl",
+        "value": "http://sonarr:8989",
+        "privacy": "normal"
+      },
+      {
+        "name": "apiKey",
+        "value": "********",
+        "privacy": "apiKey"
+      },
+      {
+        "name": "syncCategories",
+        "value": [
+          5000,
+          5010,
+          5020,
+          5030,
+          5040,
+          5045,
+          5050,
+          5090
+        ],
+        "privacy": "normal"
+      },
+      {
+        "name": "animeSyncCategories",
+        "value": [
+          5070
+        ],
+        "privacy": "normal"
+      },
+      {
+        "name": "syncAnimeStandardFormatSearch",
+        "value": false,
+        "privacy": "normal"
+      }
+    ]
+  }
+]

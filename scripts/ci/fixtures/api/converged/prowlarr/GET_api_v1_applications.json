@@ -1,0 +1,273 @@
+[
+  {
+    "id": 2,
+    "name": "Sonarr",
+    "implementationName": "Sonarr",
+    "implementation": "Sonarr",
+    "configContract": "SonarrSettings",
+    "syncLevel": "fullSync",
+    "tags": [],
+    "fields": [
+      {
+        "name": "prowlarrUrl",
+        "value": "http://prowlarr:9696",
+        "privacy": "normal"
+      },
+      {
+        "name": "baseUrl",
+        "value": "http://sonarr:8989",
+        "privacy": "normal"
+      },
+      {
+        "name": "apiKey",
+        "value": "********",
+        "privacy": "apiKey"
+      },
+      {
+        "name": "syncCategories",
+        "value": [
+          5000,
+          5010,
+          5020,
+          5030,
+          5040,
+          5045,
+          5050,
+          5090
+        ],
+        "privacy": "normal"
+      },
+      {
+        "name": "animeSyncCategories",
+        "value": [
+          5070
+        ],
+        "privacy": "normal"
+      },
+      {
+        "name": "syncAnimeStandardFormatSearch",
+        "value": false,
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "name": "Sonarr Anime",
+    "implementationName": "Sonarr",
+    "implementation": "Sonarr",
+    "configContract": "SonarrSettings",
+    "syncLevel": "fullSync",
+    "tags": [],
+    "fields": [
+      {
+        "name": "prowlarrUrl",
+        "value": "http://prowlarr:9696",
+        "privacy": "normal"
+      },
+      {
+        "name": "baseUrl",
+        "value": "http://sonarr-anime:8989",
+        "privacy": "normal"
+      },
+      {
+        "name": "apiKey",
+        "value": "********",
+        "privacy": "apiKey"
+      },
+      {
+        "name": "syncCategories",
+        "value": [],
+        "privacy": "normal"
+      },
+      {
+        "name": "animeSyncCategories",
+        "value": [
+          5070
+        ],
+        "privacy": "normal"
+      },
+      {
+        "name": "syncAnimeStandardFormatSearch",
+        "value": false,
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "name": "Sonarr 4K",
+    "implementationName": "Sonarr",
+    "implementation": "Sonarr",
+    "configContract": "SonarrSettings",
+    "syncLevel": "fullSync",
+    "tags": [],
+    "fields": [
+      {
+        "name": "prowlarrUrl",
+        "value": "http://prowlarr:9696",
+        "privacy": "normal"
+      },
+      {
+        "name": "baseUrl",
+        "value": "http://sonarr-4k:8989",
+        "privacy": "normal"
+      },
+      {
+        "name": "apiKey",
+        "value": "********",
+        "privacy": "apiKey"
+      },
+      {
+        "name": "syncCategories",
+        "value": [
+          5000,
+          5010,
+          5020,
+          5030,
+          5040,
+          5045,
+          5050,
+          5090
+        ],
+        "privacy": "normal"
+      },
+      {
+        "name": "animeSyncCategories",
+        "value": [
+          5070
+        ],
+        "privacy": "normal"
+      },
+      {
+        "name": "syncAnimeStandardFormatSearch",
+        "value": false,
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "id": 5,
+    "name": "Radarr",
+    "implementationName": "Radarr",
+    "implementation": "Radarr",
+    "configContract": "RadarrSettings",
+    "syncLevel": "fullSync",
+    "tags": [],
+    "fields": [
+      {
+        "name": "prowlarrUrl",
+        "value": "http://prowlarr:9696",
+        "privacy": "normal"
+      },
+      {
+        "name": "baseUrl",
+        "value": "http://radarr:7878",
+        "privacy": "normal"
+      },
+      {
+        "name": "apiKey",
+        "value": "********",
+        "privacy": "apiKey"
+      },
+      {
+        "name": "syncCategories",
+        "value": [
+          2000,
+          2010,
+          2020,
+          2030,
+          2040,
+          2045,
+          2050,
+          2060,
+          2070,
+          2080,
+          2090
+        ],
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "id": 6,
+    "name": "Radarr 4K",
+    "implementationName": "Radarr",
+    "implementation": "Radarr",
+    "configContract": "RadarrSettings",
+    "syncLevel": "fullSync",
+    "tags": [],
+    "fields": [
+      {
+        "name": "prowlarrUrl",
+        "value": "http://prowlarr:9696",
+        "privacy": "normal"
+      },
+      {
+        "name": "baseUrl",
+        "value": "http://radarr-4k:7878",
+        "privacy": "normal"
+      },
+      {
+        "name": "apiKey",
+        "value": "********",
+        "privacy": "apiKey"
+      },
+      {
+        "name": "syncCategories",
+        "value": [
+          2000,
+          2010,
+          2020,
+          2030,
+          2040,
+          2045,
+          2050,
+          2060,
+          2070,
+          2080,
+          2090
+        ],
+        "privacy": "normal"
+      }
+    ]
+  },
+  {
+    "id": 7,
+    "name": "Lidarr",
+    "implementationName": "Lidarr",
+    "implementation": "Lidarr",
+    "configContract": "LidarrSettings",
+    "syncLevel": "fullSync",
+    "tags": [],
+    "fields": [
+      {
+        "name": "prowlarrUrl",
+        "value": "http://prowlarr:9696",
+        "privacy": "normal"
+      },
+      {
+        "name": "baseUrl",
+        "value": "http://lidarr:8686",
+        "privacy": "normal"
+      },
+      {
+        "name": "apiKey",
+        "value": "********",
+        "privacy": "apiKey"
+      },
+      {
+        "name": "syncCategories",
+        "value": [
+          3000,
+          3010,
+          3030,
+          3040,
+          3050,
+          3060
+        ],
+        "privacy": "normal"
+      }
+    ]
+  }
+]

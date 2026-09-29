@@ -31,4 +31,11 @@ The archive also holds `_containers.txt`, `_inspect.json`, `_versions.txt`, `_la
 
 **Secrets:** `_inspect.json`, `_compose-resolved.yml` and the `.tar.zst` archive contain live credentials from the old containers' env (Twingate tokens, VPN keys, *arr/SAB API keys). Read them in place on the pool (root-only, mode 600). Never copy them, or excerpts with credentials, into this repo; only non-secret facts such as volume mappings and image versions may be transcribed. Revoke the old Twingate connector tokens and VPN credentials once the old VM is retired (runbook 01 §1a step 0).
 
+## Verified old paths (2026-09-28, from the archive)
+- *arr root folders: sonarr `/data/shows/`, animesonarr `/data/anime/`, radarr `/data/movies/`, lidarr none.
+- Plex sections: Movies `/data/movies`, TV Shows `/data/shows`, Music `/data/music`, Anime TV `/data/anime`.
+- SABnzbd: `download_dir=/data/downloads/sabnzbd/incomplete`, `complete_dir=/data/downloads/sabnzbd/complete`, categories `*`, `software`, `movies`, `series`, `anime-series` (no per-category dir).
+- Every old app mounted `/data:/data` (the old VM's `/data` was the pool root). Plex used `network_mode: host`.
+- Old versions: see `config/min-versions.txt` (Phase 2); bazarr `v1.6.0-ls360` and fileflows `26.04` apply in Phase 4.
+
 New instances with no old config: `sonarr-4k`, `radarr-4k`, plus Traefik, Authentik, CrowdSec, cloudflare-ddns, Recyclarr, Maintainerr, and the Phase 5 ops apps.

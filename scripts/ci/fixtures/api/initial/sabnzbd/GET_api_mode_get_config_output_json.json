@@ -1,0 +1,57 @@
+{
+  "config": {
+    "misc": {
+      "download_dir": "/data/downloads/sabnzbd/incomplete",
+      "complete_dir": "/data/downloads/sabnzbd/complete",
+      "host_whitelist": "oldvm.lan, oldvm",
+      "port": "8080"
+    },
+    "categories": [
+      {
+        "name": "*",
+        "order": 0,
+        "pp": "",
+        "script": "Default",
+        "dir": "",
+        "newzbin": "",
+        "priority": -100
+      },
+      {
+        "name": "software",
+        "order": 1,
+        "pp": "",
+        "script": "Default",
+        "dir": "",
+        "newzbin": "",
+        "priority": -100
+      },
+      {
+        "name": "movies",
+        "order": 2,
+        "pp": "",
+        "script": "Default",
+        "dir": "",
+        "newzbin": "",
+        "priority": -100
+      },
+      {
+        "name": "series",
+        "order": 3,
+        "pp": "",
+        "script": "Default",
+        "dir": "",
+        "newzbin": "",
+        "priority": -100
+      },
+      {
+        "name": "anime-series",
+        "order": 4,
+        "pp": "",
+        "script": "Default",
+        "dir": "",
+        "newzbin": "",
+        "priority": -100
+      }
+    ]
+  }
+}

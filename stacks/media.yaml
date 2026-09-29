@@ -1,6 +1,87 @@
 # Media stack — services added in Phase 2 (plex, seerr, tautulli; jellyfin behind the optional `jellyfin` profile)
 # New services: extends: {file: _common.yaml, service: base} and pin image tags (never :latest).
-services: {}
+services:
+  plex:
+    extends:
+      file: _common.yaml
+      service: base
+    image: lscr.io/linuxserver/plex:1.43.4.10903-e5521bd8c-ls324
+    # Bridge network; 32400 is the only permanently published port (router forwards it).
+    ports:
+      - "32400:32400"
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      VERSION: docker
+    volumes:
+      - ${APPDATA_ROOT}/plex:/config
+      - ${DATA_ROOT}/media:/data/media:ro
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:32400/identity || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+  seerr:
+    extends:
+      file: _common.yaml
+      service: base
+    image: ghcr.io/seerr-team/seerr:v3.4.1
+    # node:22-alpine image: no curl, so the healthcheck uses busybox wget.
+    init: true
+    environment:
+      LOG_LEVEL: info
+    volumes:
+      - ${APPDATA_ROOT}/seerr:/app/config
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5055/api/v1/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  tautulli:
+    extends:
+      file: _common.yaml
+      service: base
+    image: lscr.io/linuxserver/tautulli:v2.17.2-ls240
+    volumes:
+      - ${APPDATA_ROOT}/tautulli:/config
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8181/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  jellyfin:
+    extends:
+      file: _common.yaml
+      service: base
+    image: lscr.io/linuxserver/jellyfin:12.1ubu2604-ls50
+    # Optional evaluation: only started with --profile jellyfin.
+    profiles: ["jellyfin"]
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      - ${APPDATA_ROOT}/jellyfin:/config
+      - ${DATA_ROOT}/media:/data/media:ro
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8096/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
 networks:
   proxy:
     name: proxy

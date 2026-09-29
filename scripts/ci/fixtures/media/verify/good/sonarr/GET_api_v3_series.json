@@ -1,0 +1,48 @@
+[
+  {
+    "id": 1,
+    "title": "Show A",
+    "tvdbId": 1001,
+    "path": "/data/media/tv/Show A",
+    "monitored": true,
+    "tags": [],
+    "statistics": {
+      "episodeFileCount": 10
+    }
+  },
+  {
+    "id": 2,
+    "title": "Show B",
+    "tvdbId": 1002,
+    "path": "/data/media/tv/Show B",
+    "monitored": true,
+    "tags": [],
+    "statistics": {
+      "episodeFileCount": 5
+    }
+  },
+  {
+    "id": 3,
+    "title": "Mixed Show",
+    "tvdbId": 1003,
+    "path": "/data/media/tv/Mixed Show",
+    "monitored": true,
+    "tags": [],
+    "statistics": {
+      "episodeFileCount": 4
+    }
+  },
+  {
+    "id": 4,
+    "title": "4K Show",
+    "tvdbId": 1004,
+    "path": "/data/media/tv/4K Show",
+    "monitored": false,
+    "tags": [
+      5
+    ],
+    "statistics": {
+      "episodeFileCount": 0
+    }
+  }
+]

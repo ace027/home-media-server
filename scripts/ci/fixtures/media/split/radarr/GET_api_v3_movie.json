@@ -1,0 +1,83 @@
+[
+  {
+    "id": 11,
+    "title": "Big 4K Movie",
+    "year": 2019,
+    "tmdbId": 1011,
+    "path": "/data/media/movies/Big 4K Movie (2019)",
+    "hasFile": true,
+    "monitored": true,
+    "tags": [],
+    "qualityProfileId": 1
+  },
+  {
+    "id": 12,
+    "title": "HD Movie",
+    "year": 2018,
+    "tmdbId": 1012,
+    "path": "/data/media/movies/HD Movie (2018)",
+    "hasFile": true,
+    "monitored": true,
+    "tags": [
+      2
+    ],
+    "qualityProfileId": 1
+  },
+  {
+    "id": 13,
+    "title": "Unmonitored 4K Movie",
+    "year": 2017,
+    "tmdbId": 1013,
+    "path": "/data/media/movies/Unmonitored 4K Movie (2017)",
+    "hasFile": true,
+    "monitored": false,
+    "tags": [],
+    "qualityProfileId": 1
+  },
+  {
+    "id": 14,
+    "title": "Tagged 4K Movie",
+    "year": 2016,
+    "tmdbId": 1014,
+    "path": "/data/media/movies/Tagged 4K Movie (2016)",
+    "hasFile": true,
+    "monitored": false,
+    "tags": [
+      7
+    ],
+    "qualityProfileId": 1
+  },
+  {
+    "id": 15,
+    "title": "Scope Movie",
+    "year": 2015,
+    "tmdbId": 1015,
+    "path": "/data/media/movies/Scope Movie (2015)",
+    "hasFile": true,
+    "monitored": true,
+    "tags": [],
+    "qualityProfileId": 1
+  },
+  {
+    "id": 16,
+    "title": "Anime 4K Movie",
+    "year": 2021,
+    "tmdbId": 1016,
+    "path": "/data/media/anime-movies/Anime 4K Movie (2021)",
+    "hasFile": true,
+    "monitored": true,
+    "tags": [],
+    "qualityProfileId": 1
+  },
+  {
+    "id": 17,
+    "title": "Missing Movie",
+    "year": 2022,
+    "tmdbId": 1017,
+    "path": "/data/media/movies/Missing Movie (2022)",
+    "hasFile": false,
+    "monitored": true,
+    "tags": [],
+    "qualityProfileId": 1
+  }
+]

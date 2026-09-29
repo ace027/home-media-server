@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "enable": true,
+    "protocol": "usenet",
+    "name": "NZBGet",
+    "implementation": "Nzbget",
+    "fields": [
+      {
+        "name": "host",
+        "value": "nzbget",
+        "privacy": "normal"
+      },
+      {
+        "name": "port",
+        "value": 6789,
+        "privacy": "normal"
+      },
+      {
+        "name": "password",
+        "value": "********",
+        "privacy": "password"
+      }
+    ]
+  }
+]

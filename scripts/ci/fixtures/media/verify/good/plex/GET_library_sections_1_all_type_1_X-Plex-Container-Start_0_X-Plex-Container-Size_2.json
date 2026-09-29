@@ -1,0 +1,20 @@
+{
+  "MediaContainer": {
+    "size": 2,
+    "totalSize": 2,
+    "offset": 0,
+    "Metadata": [
+      {
+        "ratingKey": "101",
+        "type": "movie",
+        "title": "Movie A",
+        "viewCount": 2
+      },
+      {
+        "ratingKey": "103",
+        "type": "movie",
+        "title": "Anime Movie"
+      }
+    ]
+  }
+}
