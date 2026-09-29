@@ -1,6 +1,6 @@
 # Phase 2: Core Media Automation — Review Summary
 
-## Result: ESCALATED
+## Result: PASSED (after escalation)
 
 - **Cycles used**: 3 of 3 (maximum)
 - **Reviewers** (dynamic panel):
@@ -9,7 +9,7 @@
   - engineering-infrastructure-devops (Operational Readiness)
   - engineering-security-engineer (Secrets & Trust Boundaries)
 - **Date**: 2026-09-28
-- **Remaining**: 0 blockers, 3 warnings, 1 suggestion
+- **Remaining**: 0 blockers, 0 warnings (the 3 escalated warnings were fixed and passed a targeted re-review on 2026-09-29)
 - **Scope of what remains**: every open finding is on the 4K split `--undo` recovery path. The first split, the first undo, restore, remap, wiring and verify are clean.
 
 ## Findings Summary
@@ -56,3 +56,20 @@ All three open warnings are small, localized to the `--undo` resume path of `30-
 ## Suggestions noted (not required)
 - Keep `/opt/appdata/.rollback` outside the PUID-owned tree (or make `APPDATA_ROOT` root-owned) to close the residual TOCTOU on root's `mv` into `.rollback` (security, cycle 2).
 - Restore an episode that was monitored inside a season that was unmonitored before the split (an edge case outside `prior.e`).
+
+## Escalation Resolution (2026-09-29)
+- **Owner decision:** "Fix manually and re-run /legion:review".
+- **Fixes:**
+  - 6b35718: resumed undo rows GET the 4K item before DELETE (Sonarr v4 returns 500 on a DELETE of a missing series); an empty `src` is not "moved back"; stale `prior.e` ids are skipped.
+  - 8136dd6: the restore example was regenerated.
+- **Targeted re-review** (reviewers on Sonnet): testing-api-tester **PASS**, verified against the Sonarr v4.0.19.2979 and Radarr v6.3.0.10514 source. testing-qa-verification-specialist **PASS**: both reproductions behave correctly, there are no regressions in the other undo paths, runbook wording matches, and the CLAUDE.md pre-push block is green.
+- **QA suggestion applied** (the commit after this review file's first version): `moved_back` requires a regular file in `src`, so a src holding only an empty `Season 01` no longer counts. Test 5f is extended and mutation-checked.
+- **Not actioned (low value):** no test for Radarr's GET 404 branch (the code path is shared with Sonarr).
+
+## Result
+**PASSED.** Totals across all cycles:
+- 3 blockers fixed;
+- 15 warnings fixed;
+- 15 suggestions applied, 2 noted.
+
+Owner hardware acceptance (runbook 03) is still pending and is tracked in the runbook's Acceptance record.

@@ -3,7 +3,7 @@
 ## Phases
 
 - [x] Phase 1: Host & Repo Foundation (5 plans)
-- [ ] Phase 2: Core Media Automation (4 plans)
+- [x] Phase 2: Core Media Automation (4 plans)
 - [ ] Phase 3: Edge & Secure Access (3 plans)
 - [ ] Phase 4: Quality Automation & AV1 (3 plans)
 - [ ] Phase 5: Observability & Resilience (3 plans)
@@ -91,7 +91,7 @@
 | Phase | Plans | Completed | Status |
 |-------|-------|-----------|--------|
 | 1. Host & Repo Foundation | 5 | 5 | Complete |
-| 2. Core Media Automation | 4 | 4 | Complete (owner acceptance pending) |
+| 2. Core Media Automation | 4 | 4 | Complete (review passed; owner acceptance pending) |
 | 3. Edge & Secure Access | 3 | 0 | Not started |
 | 4. Quality Automation & AV1 | 3 | 0 | Not started |
 | 5. Observability & Resilience | 3 | 0 | Not started |
