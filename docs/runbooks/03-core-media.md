@@ -865,30 +865,56 @@ and you have three `PASS import` lines. Paste them below.
 
 ## Acceptance record
 
-Fill this in from your real run on `media-01`. Nothing here comes from CI.
+Filled in from the owner's real run on `media-01`. Nothing here comes from CI.
 
 | Item | Value |
 |------|-------|
-| Date | |
-| VM snapshot | |
-| ZFS snapshot | |
-| Restore stage `<ts>` | |
-| Split manifest | |
-| `skip-mixed` / `check` decisions (title: moved to 4K / kept in HD) | |
-| `anime-4k` decision | |
+| Date | 2026-09-29 |
+| VM snapshot | `pre-phase2` (taken 2026-09-28 20:19, before step 2) |
+| ZFS snapshot | `tank/data@pre-4k-split`, created **after** the split ran (2026-09-29), so the split itself had no ZFS rollback point; it is a post-split baseline |
+| Restore stage `<ts>` | `20260928-222931` |
+| Split manifest | `split-4k-20260928-212409.manifest.tsv` (64 titles moved) |
+| `skip-mixed` / `check` decisions (title: moved to 4K / kept in HD) | none (`mixed=0`, no `check` rows) |
+| `anime-4k` decision | none (`anime-4k=0`) |
 
 `scripts/vm/verify-media.sh` (the full output, ending with the `RESULT`
 line):
 
-<!-- owner: paste real output -->
 ```
+PASS compose-healthy 11 services running (healthy)
+PASS image-versions OK: 11 images at or above minimum
+PASS arr-rootfolders 6 instances match the wiring table; 0 items under old roots
+PASS library-adopted sonarr 818+0>=818; sonarr-anime 1070+0>=1058; radarr 25+64>=87 (current+moved vs baseline)
+PASS no-regrab 0 re-grabs of baseline or split items since 2026-09-29T02:31:52Z; upgrades=1; other=24
+PASS sab-categories 7 categories, dirs = names, /data/usenet/{incomplete,complete}
+PASS download-clients 6 *arr + prowlarr: one SABnzbd client each (sabnzbd:8080, own category); 0 torrent indexers
+PASS prowlarr-sync 6 apps fullSync; 2 usenet indexers, 0 torrent, 0 proxies; each *arr has synced (Prowlarr) indexers
+PASS 4k-split no monitored HD item has a >=2160p file; mixed=0 (split-4k-20260928-212409.tsv)
+PASS plex-sections 6 sections at /data/media/*; autoEmptyTrash=0
+PASS plex-watched watched movies+episodes=540 >= baseline 540
+PASS plex-counts Movies plex=25 radarr=25 (+0); TV Shows plex=26 sonarr=26 (+0); Anime TV plex=24 sonarr-anime=24 (+0); Movies 4K plex=65 radarr-4k=65 (+0); TV 4K plex=0 sonarr-4k=0 (+0)
+PASS plex-hw transcodeHwRequested with decode=vaapi encode=vaapi
+PASS seerr-servers Radarr, Radarr 4K, Sonarr, Sonarr 4K, Sonarr Anime by hostname; plex:32400 with 5 libraries
+SKIP jellyfin not running (optional: docker compose --profile jellyfin up -d jellyfin)
+RESULT: 14 pass, 0 fail, 1 skip
 ```
 
 `--watch-import` lines (HD movie, 4K movie, anime series):
 
-<!-- owner: paste real output -->
 ```
+PASS import radarr inode=2041
+PASS import radarr-4k inode=2265
+PASS import sonarr-anime inode=2479
 ```
+
+Result: **accepted**. `verify-media.sh` reports 0 fail with `plex-hw`,
+`plex-watched` and `plex-counts` PASS, and all three `--watch-import`
+lines PASS. `jellyfin` is optional and was skipped.
+
+Findings from this run, all fixed on `dev` before acceptance: the remap
+refused titles that have no files (PR #7), containers could not resolve
+names because of two dead DNS servers in the VM's resolver list (PR #7),
+and `no-regrab` failed on a REPACK upgrade (PR #8).
 
 ## Rollback
 
