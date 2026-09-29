@@ -321,9 +321,12 @@ Check that:
   series or movies in each app).
 
 Before any change, even in the dry-run, the remap checks that every
-title's folder already exists under its new root on the pool. If one is
-missing, it stops with `folder missing on the new pool; nothing changed:
-<paths>` (Troubleshooting, "Remap: folder missing").
+title **that has files** already has its folder under its new root on the
+pool. If one is missing, it stops with `folder missing on the new pool;
+nothing changed: <paths>` (Troubleshooting, "Remap: folder missing").
+Titles with no files (unreleased or never downloaded, so the *arr app has
+no folder for them) are only listed in an `[INFO] <n> title(s) have no
+files yet and no folder on the new pool` line; nothing needs doing.
 
 Apply it. Each instance's rescan must finish within `WAIT_TIMEOUT`
 seconds (default 600). For a large library, raise it:
@@ -967,10 +970,10 @@ Example (from the CI fixtures):
 Run `docker compose stop sabnzbd prowlarr` and the remap again.
 
 **Remap: folder missing** (`folder missing on the new pool; nothing
-changed: <paths>`). An *arr app lists a title whose folder isn't under
-its new root on the pool. Its rescan would drop the title's files while
-it stays monitored, so the remap stops before any change. For each path
-listed:
+changed: <paths>`). An *arr app lists a title that has files but whose
+folder isn't under its new root on the pool. Its rescan would drop the
+title's files while it stays monitored, so the remap stops before any
+change. For each path listed:
 - If the folder is there under a slightly different name, rename it on
   the pool to the name shown.
 - If it is missing, restore it from the originals on the Proxmox host.

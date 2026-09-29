@@ -88,24 +88,43 @@ trap 'rm -rf "$W"' EXIT
 declare -A MOVED=()
 declare -A KIND=([sonarr]=series [sonarr-anime]=series [radarr]=movie)
 
-# --- every item to move must already have its folder on the new pool ----------
+# --- every item WITH FILES must already have its folder on the new pool ------
 # The rescan after the editor call drops the file records of an item whose
 # folder is missing, while the item stays monitored: that means re-downloads.
+# An item with no files has no records to drop (the *arr apps only create a
+# folder once a file exists: unreleased movies, series added but not yet
+# downloaded), so a missing folder there is only reported.
 # Checked for all instances before any change (also in dry-run); the item
-# lists read here are reused by step 3.
+# lists read here are reused by step 3. If the app doesn't say whether an
+# item has files, it is treated as having them.
 missing=()
+missing_empty=()
 for svc in "${REMAP_SVCS[@]}"; do
   api "$svc" GET "$(arr_base "$svc")/${KIND[$svc]}" >"$W/$svc-items.json"
-  mapfile -d '' -t names < <(jq -j --arg o "${OLD[$svc]}/" '
-    .[]? | objects | (.path // "") | select(startswith($o))
-    | sub("/+$"; "") | split("/") | last | ., "\u0000"' "$W/$svc-items.json")
-  for name in "${names[@]}"; do
+  mapfile -d '' -t fields < <(jq -j --arg o "${OLD[$svc]}/" '
+    def has_files:
+      if .hasFile != null then .hasFile
+      elif .statistics.episodeFileCount != null then (.statistics.episodeFileCount > 0)
+      else true end;
+    .[]? | objects | select((.path // "") | startswith($o))
+    | ((.path | sub("/+$"; "") | split("/") | last), "\u0000", (has_files | tostring), "\u0000")' \
+    "$W/$svc-items.json")
+  for ((i = 0; i + 1 < ${#fields[@]}; i += 2)); do
+    name="${fields[i]}"
     dir="$(on_disk "${NEW[$svc]}/$name")"
-    [[ -n "$name" && -d "$dir" ]] || missing+=("$dir")
+    [[ -n "$name" && -d "$dir" ]] && continue
+    if [[ "${fields[i + 1]}" == true ]]; then
+      missing+=("$dir")
+    else
+      missing_empty+=("$dir")
+    fi
   done
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
   die "folder missing on the new pool; nothing changed: $(printf '%s, ' "${missing[@]}" | sed 's/, $//')"
+fi
+if [[ ${#missing_empty[@]} -gt 0 ]]; then
+  log_info "${#missing_empty[@]} title(s) have no files yet and no folder on the new pool; nothing to protect: $(printf '%s, ' "${missing_empty[@]}" | sed 's/, $//')"
 fi
 
 # remap_instance <svc>
