@@ -11,6 +11,12 @@ services:
       PUID: ${PUID}
       PGID: ${PGID}
       UMASK: ${UMASK}
+    # Explicit resolvers: Docker's built-in DNS forwards to the host's resolv.conf
+    # list, and a slow or dead first entry (a LAN DNS server) makes lookups time
+    # out inside containers. Override in .env (DNS_PRIMARY / DNS_SECONDARY).
+    dns:
+      - ${DNS_PRIMARY:-1.1.1.1}
+      - ${DNS_SECONDARY:-8.8.8.8}
     logging:
       driver: json-file
       options:

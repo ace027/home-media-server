@@ -75,6 +75,14 @@ pub="$(jq -c '[.services[].ports[]?.published] | unique' <<<"$full")"
 [[ "$pub" == '["32400"]' ]] || fail "published ports without override: $pub (want [\"32400\"])"
 ok "only 32400 without override"
 
+# --- 4b. Every service gets explicit DNS servers (overridable) -------------------
+nodns="$(jq -r '.services | to_entries[] | select((.value.dns // []) != ["1.1.1.1","8.8.8.8"]) | .key' <<<"$full")"
+[[ -z "$nodns" ]] || fail "services without the default dns [1.1.1.1, 8.8.8.8]: $nodns"
+ovr="$(DNS_PRIMARY=192.0.2.53 DNS_SECONDARY=192.0.2.54 docker compose -f compose.yaml --profile jellyfin config --format json)"
+[[ "$(jq -c '[.services[].dns] | unique' <<<"$ovr")" == '[["192.0.2.53","192.0.2.54"]]' ]] \
+  || fail "DNS_PRIMARY/DNS_SECONDARY did not override the container dns"
+ok "container dns"
+
 lan="$("${LAN[@]}" docker compose --profile jellyfin config --format json)"
 n_admin="$(jq '[.services[].ports[]? | select(.published != "32400")] | length' <<<"$lan")"
 [[ "$n_admin" -eq 11 ]] || fail "lan override: expected 11 admin ports, got $n_admin"

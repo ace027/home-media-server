@@ -222,7 +222,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
   - `sabnzbd` and `prowlarr` are **not running**.
   - `sonarr`, `sonarr-anime`, `radarr` and `lidarr` are running and healthy.
   - Each new root dir exists (`test -d`).
-  - Every item whose `path` is under an old root has a folder `<new root>/<folder name>` on disk (`$DATA_ROOT/...`), where the folder name is the last component of its `path`. Otherwise the rescan would drop its file records while it stays monitored. Checked for all three instances before any change, also in dry-run; on failure exit 1 with `folder missing on the new pool; nothing changed: <paths>`.
+  - Every item **with files** whose `path` is under an old root has a folder `<new root>/<folder name>` on disk (`$DATA_ROOT/...`), where the folder name is the last component of its `path`. Otherwise the rescan would drop its file records while it stays monitored. Checked for all three instances before any change, also in dry-run; on failure exit 1 with `folder missing on the new pool; nothing changed: <paths>`. An item with no files (Radarr `hasFile` false, Sonarr `statistics.episodeFileCount` 0: unreleased or never-downloaded titles, which the *arr apps have no folder for) has no records to drop, so a missing folder there is only reported as `[INFO] <n> title(s) have no files yet and no folder on the new pool; nothing to protect: <paths>`. If the app doesn't say whether an item has files, it counts as having them.
 - Per instance:
   1. `GET {base}/config/mediamanagement`, set `autoUnmonitorPreviouslyDownloadedEpisodes` (Sonarr) or `…Movies` (Radarr) to `false`, and `PUT` it, only if it differs.
   2. `POST {base}/rootfolder {"path":"<new>"}` if missing.
@@ -590,6 +590,7 @@ Done during `/legion:plan 2`, not part of the build: PROJECT.md (R5, R12, decisi
 | 36 | `30-split-4k.sh` undo, manifest | Undo is resumable; empty recreated `src` removed; `prior.e` restores unmonitored episodes; atomic `new_id` rewrite | Phase 2 review cycle 2 |
 | 37 | `10-restore-appdata.sh` | `.rollback`, `.rollback/<ts>` and `-undone` refused if a symlink (always) or not root-owned (`--apply`); `.rollback` created root-owned 700 | Phase 2 review cycle 2 |
 | 38 | `30-split-4k.sh` undo | Resumed rows: GET before DELETE (Sonarr 500 on a missing id); an empty `src` is not "moved back"; stale `prior.e` ids skipped | Phase 2 review escalation fixes |
+| 39 | `20-arr-remap.sh` folder precheck | Refuses only for titles with files; titles with no files and no folder are reported (found on the owner's real run: unmonitored titles that never had folders) | Owner run, 2026-09-29 |
 
 ## Complexity Assessment
 

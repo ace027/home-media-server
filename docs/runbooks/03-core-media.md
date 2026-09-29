@@ -321,9 +321,12 @@ Check that:
   series or movies in each app).
 
 Before any change, even in the dry-run, the remap checks that every
-title's folder already exists under its new root on the pool. If one is
-missing, it stops with `folder missing on the new pool; nothing changed:
-<paths>` (Troubleshooting, "Remap: folder missing").
+title **that has files** already has its folder under its new root on the
+pool. If one is missing, it stops with `folder missing on the new pool;
+nothing changed: <paths>` (Troubleshooting, "Remap: folder missing").
+Titles with no files (unreleased or never downloaded, so the *arr app has
+no folder for them) are only listed in an `[INFO] <n> title(s) have no
+files yet and no folder on the new pool` line; nothing needs doing.
 
 Apply it. Each instance's rescan must finish within `WAIT_TIMEOUT`
 seconds (default 600). For a large library, raise it:
@@ -956,6 +959,18 @@ hand into the 4K instance or keep it in HD (step 5, item 4). `4k-split`
 exempts it only while the newest `split-4k-*.tsv` lists it, so don't
 delete that file.
 
+**A container can't resolve names** (radarr-4k logs `Resource temporarily
+unavailable (api.radarr.video:443)`, `curl` says `Resolving timed out`, the
+Sonarr/Radarr lookups return HTTP 500). Docker's built-in DNS forwards to
+the VM's `/etc/resolv.conf` list, and a slow or dead first entry (for
+example a LAN DNS server) times out. Every service gets explicit DNS
+servers from `stacks/_common.yaml` (default `1.1.1.1`, `8.8.8.8`; set
+`DNS_PRIMARY` and `DNS_SECONDARY` in `.env` to change them). After a
+`git pull`, run `docker compose up -d` (it recreates the services whose
+config changed) and check:
+`docker compose exec radarr-4k curl -sSI -m 10 https://api.radarr.video | head -1`
+must print an HTTP status line.
+
 **`remap` refuses: `stop sabnzbd and prowlarr first`.** They must not run
 while paths are remapped:
 
@@ -967,10 +982,10 @@ Example (from the CI fixtures):
 Run `docker compose stop sabnzbd prowlarr` and the remap again.
 
 **Remap: folder missing** (`folder missing on the new pool; nothing
-changed: <paths>`). An *arr app lists a title whose folder isn't under
-its new root on the pool. Its rescan would drop the title's files while
-it stays monitored, so the remap stops before any change. For each path
-listed:
+changed: <paths>`). An *arr app lists a title that has files but whose
+folder isn't under its new root on the pool. Its rescan would drop the
+title's files while it stays monitored, so the remap stops before any
+change. For each path listed:
 - If the folder is there under a slightly different name, rename it on
   the pool to the name shown.
 - If it is missing, restore it from the originals on the Proxmox host.

@@ -417,7 +417,7 @@ ok "remap exits 1 and keeps the old root when items are left under it"
 # change, in dry-run and with --apply, naming the folder.
 for mode in "" --apply; do
   use_fixtures initial
-  jq '. + [{"id": 5, "title": "Show Gone", "path": "/data/shows/Show Gone"}]' \
+  jq '. + [{"id": 5, "title": "Show Gone", "path": "/data/shows/Show Gone", "statistics": {"episodeFileCount": 3}}]' \
     "$FIX/initial/sonarr/GET_api_v3_series.json" > "$T/fx/sonarr/GET_api_v3_series.json"
   run_capture env STUB_RUNNING="$ARR_UP" "$REMAP" ${mode:+"$mode"}
   expect "remap-folder-missing${mode}" 1 \
@@ -427,6 +427,27 @@ for mode in "" --apply; do
   refute "remap-folder-missing${mode}" '^DRY-RUN:'
 done
 ok "remap refuses (dry-run too) when an item's folder is missing on the new pool"
+
+# 6c. Titles with no files and no folder (an unreleased movie, a series added
+# but not downloaded) are only reported: nothing to protect, so no refusal.
+# A title the app doesn't describe (no file info) is treated as having files.
+for mode in "" --apply; do
+  use_fixtures initial
+  jq '. + [{"id": 6, "title": "Show Empty", "path": "/data/shows/Show Empty", "statistics": {"episodeFileCount": 0}}]' \
+    "$FIX/initial/sonarr/GET_api_v3_series.json" > "$T/fx/sonarr/GET_api_v3_series.json"
+  jq '. + [{"id": 26, "title": "Movie Empty", "path": "/data/movies/Movie Empty (2030)", "hasFile": false}]' \
+    "$FIX/initial/radarr/GET_api_v3_movie.json" > "$T/fx/radarr/GET_api_v3_movie.json"
+  run_capture env STUB_RUNNING="$ARR_UP" "$REMAP" ${mode:+"$mode"}
+  expect "remap-no-files${mode}" 0 \
+    "\\[INFO\\] 2 title\\(s\\) have no files yet and no folder on the new pool; nothing to protect: $T/data/media/tv/Show Empty, $T/data/media/movies/Movie Empty \\(2030\\)\$"
+  refute "remap-no-files${mode}" 'folder missing on the new pool'
+done
+use_fixtures initial
+jq '. + [{"id": 7, "title": "Show Unknown", "path": "/data/shows/Show Unknown"}]' \
+  "$FIX/initial/sonarr/GET_api_v3_series.json" > "$T/fx/sonarr/GET_api_v3_series.json"
+run_capture env STUB_RUNNING="$ARR_UP" "$REMAP"
+expect remap-files-unknown 1 "folder missing on the new pool; nothing changed: $T/data/media/tv/Show Unknown\$"
+ok "remap only reports a missing folder for a title with no files; a title with files (or unknown) still refuses"
 
 # ==============================================================================
 # 7. Wire --only sab
