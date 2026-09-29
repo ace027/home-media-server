@@ -321,7 +321,7 @@ CI: lint.yml → scripts/ci/test-*.sh (stub docker/curl/ssh + fixtures) · compo
      - Moved = sum of `files` in the manifests (sonarr/radarr rows).
      - PASS if current + moved ≥ `baseline.files` for Sonarr, or ≥ `baseline.items_with_files` for Radarr.
      - SKIP if `baseline.json` is missing.
-  5. **`no-regrab`**: `GET {base}/history/since?date=<baseline.created>&eventType=grabbed` on sonarr, sonarr-anime, radarr, sonarr-4k and radarr-4k. FAIL if a grab on an HD instance has an `episodeId`/`movieId` listed in `baseline-ids/<svc>.txt`, or a grab on a 4K instance has a `seriesId`/`movieId` created by a split manifest. The detail reports `other=<n>` for the remaining grabs. SKIP if `baseline.json` is missing.
+  5. **`no-regrab`**: `GET {base}/history/since?date=<baseline.created>&eventType=grabbed` on sonarr, sonarr-anime, radarr, sonarr-4k and radarr-4k. FAIL if a grab on an HD instance has an `episodeId`/`movieId` listed in `baseline-ids/<svc>.txt`, or a grab on a 4K instance has a `seriesId`/`movieId` created by a split manifest. A grab whose release is a REPACK or PROPER (`quality.revision.version` > 1 or `isRepack`) is an upgrade of the existing file, not a re-grab: it is counted as `upgrades=<n>` (shown only when > 0) and does not fail. The detail reports `other=<n>` for the remaining grabs. SKIP if `baseline.json` is missing.
   6. **`sab-categories`**: categories equal `* tv tv-4k movies movies-4k music anime`, the dirs match, and nothing in the queue or history predates the baseline.
   7. **`download-clients`**
   8. **`prowlarr-sync`**
@@ -591,6 +591,7 @@ Done during `/legion:plan 2`, not part of the build: PROJECT.md (R5, R12, decisi
 | 37 | `10-restore-appdata.sh` | `.rollback`, `.rollback/<ts>` and `-undone` refused if a symlink (always) or not root-owned (`--apply`); `.rollback` created root-owned 700 | Phase 2 review cycle 2 |
 | 38 | `30-split-4k.sh` undo | Resumed rows: GET before DELETE (Sonarr 500 on a missing id); an empty `src` is not "moved back"; stale `prior.e` ids skipped | Phase 2 review escalation fixes |
 | 39 | `20-arr-remap.sh` folder precheck | Refuses only for titles with files; titles with no files and no folder are reported (found on the owner's real run: unmonitored titles that never had folders) | Owner run, 2026-09-29 |
+| 40 | `verify-media.sh` `no-regrab` | REPACK/PROPER grabs of protected items are upgrades (`upgrades=<n>`), not re-grabs; runbook: scan the Plex libraries before the final verify (found on the owner's real run: a BLEACH REPACK upgrade, and a new 4K movie Plex hadn't scanned) | Owner run, 2026-09-29 |
 
 ## Complexity Assessment
 
