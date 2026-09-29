@@ -959,6 +959,18 @@ hand into the 4K instance or keep it in HD (step 5, item 4). `4k-split`
 exempts it only while the newest `split-4k-*.tsv` lists it, so don't
 delete that file.
 
+**A container can't resolve names** (radarr-4k logs `Resource temporarily
+unavailable (api.radarr.video:443)`, `curl` says `Resolving timed out`, the
+Sonarr/Radarr lookups return HTTP 500). Docker's built-in DNS forwards to
+the VM's `/etc/resolv.conf` list, and a slow or dead first entry (for
+example a LAN DNS server) times out. Every service gets explicit DNS
+servers from `stacks/_common.yaml` (default `1.1.1.1`, `8.8.8.8`; set
+`DNS_PRIMARY` and `DNS_SECONDARY` in `.env` to change them). After a
+`git pull`, run `docker compose up -d` (it recreates the services whose
+config changed) and check:
+`docker compose exec radarr-4k curl -sSI -m 10 https://api.radarr.video | head -1`
+must print an HTTP status line.
+
 **`remap` refuses: `stop sabnzbd and prowlarr first`.** They must not run
 while paths are remapped:
 

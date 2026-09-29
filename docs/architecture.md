@@ -129,7 +129,7 @@ Plex's `32400` is the only port the stack files publish, and the only permanent 
 | jellyfin *(only with `--profile jellyfin`)* | 8096 → 8096 |
 
 ## Service template
-New services extend the shared `base` template from `stacks/_common.yaml` instead of repeating `restart`, `security_opt`, `environment` and `logging` on every service:
+New services extend the shared `base` template from `stacks/_common.yaml` instead of repeating `restart`, `security_opt`, `environment`, `dns` and `logging` on every service. The template sets the container DNS servers (`DNS_PRIMARY` / `DNS_SECONDARY` in `.env`, default `1.1.1.1` and `8.8.8.8`): Docker's built-in DNS forwards to the VM's `resolv.conf` list, and a slow or dead first entry made lookups time out inside containers:
 
 ```yaml
 services:
