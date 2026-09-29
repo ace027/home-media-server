@@ -436,12 +436,17 @@ grabs_since() {
 }
 
 # --- 5: no-regrab -------------------------------------------------------------------
+# A grab of a protected item is a re-grab (FAIL) unless the release is a REPACK
+# or PROPER (quality revision version > 1): Sonarr and Radarr upgrade an
+# existing file to a revised release by design. Those are counted as
+# upgrades=<n>. The counts checks (library-adopted, plex-counts) still catch
+# lost files.
 check_no_regrab() {
   if [[ ! -r "$BASELINE" ]]; then
     skip no-regrab "no $BASELINE"
     return 0
   fi
-  local created cut svc field ids hits=() other=0 n
+  local created cut svc field ids hits=() other=0 upgrades=0 n u up
   created="$(jq -r '.created // empty' "$BASELINE")"
   cut="$(baseline_cut)"
   if [[ -z "$created" || ! "$cut" =~ ^[0-9]+$ ]]; then
@@ -474,16 +479,23 @@ check_no_regrab() {
     while IFS= read -r line; do
       [[ -n "$line" ]] && hits+=("$svc $line")
     done < <(jq -r --slurpfile ids "$W/ids.json" --arg f "$field" '
-      .[] | select(.[$f] as $i | $ids[0] | any(. == $i))
+      def revised: ((.quality.revision.version // 1) > 1) or (.quality.revision.isRepack == true);
+      .[] | select(.[$f] as $i | $ids[0] | any(. == $i)) | select(revised | not)
       | "\($f)=\(.[$f]) \(.sourceTitle // "?" | gsub("[\\t\\r\\n]"; " "))"' "$W/grabs-$svc.json")
+    u="$(jq --slurpfile ids "$W/ids.json" --arg f "$field" '
+      def revised: ((.quality.revision.version // 1) > 1) or (.quality.revision.isRepack == true);
+      [.[] | select(.[$f] as $i | $ids[0] | any(. == $i)) | select(revised)] | length' "$W/grabs-$svc.json")"
+    upgrades=$((upgrades + u))
     n="$(jq --slurpfile ids "$W/ids.json" --arg f "$field" '[.[] | select(.[$f] as $i | $ids[0] | any(. == $i) | not)] | length' \
       "$W/grabs-$svc.json")"
     other=$((other + n))
   done
+  up=""
+  [[ $upgrades -eq 0 ]] || up="; upgrades=$upgrades"
   if [[ ${#hits[@]} -eq 0 ]]; then
-    pass no-regrab "0 re-grabs of baseline or split items since $created; other=$other"
+    pass no-regrab "0 re-grabs of baseline or split items since $created${up}; other=$other"
   else
-    fail no-regrab "re-grabbed: $(list "${hits[@]}"); other=$other"
+    fail no-regrab "re-grabbed: $(list "${hits[@]}")${up}; other=$other"
   fi
 }
 

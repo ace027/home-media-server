@@ -823,6 +823,12 @@ root folder (`/data/media/movies`, `/data/media/movies-4k`,
 `/data/media/anime-tv`), and in SABnzbd's history that the job used the
 matching category (`movies`, `movies-4k`, `anime`).
 
+Before the final run, **scan the libraries that received a test download**
+in Plex (a library's `...` menu, then Scan Library Files; Movies 4K after
+the 4K request, Anime TV after the anime one). Plex doesn't notice new
+files on its own here, and `plex-counts` fails while Plex has fewer items
+than the *arr app (for example `Movies 4K plex=64 radarr-4k=65 (-1)`).
+
 Finally, **force a transcode**: in Plex Web, play any title and set
 Quality to 720p (2 Mbps). While it plays, run:
 
@@ -1047,7 +1053,10 @@ fixed: acceptance needs `0 fail`.
 
 **`no-regrab` FAIL** (`re-grabbed: <svc> episodeId=... <release>`). An
 instance grabbed an episode or movie that already had a file at the
-baseline, or one the split moved into a 4K instance. It usually means the
+baseline, or one the split moved into a 4K instance. A REPACK or PROPER
+of such an item is an upgrade, not a re-grab (Sonarr and Radarr replace a
+file with a revised release by design); those are counted as
+`upgrades=<n>` and don't fail. Any other grab usually means the
 item's file looked missing (a wrong path). In that instance, Activity →
 Queue: remove the grab; in SABnzbd, delete the job. Then open the item,
 check that its Path is under `/data/media/...` and the file exists, and

@@ -708,6 +708,28 @@ grab seriesId 1 2026-09-28T10:00:00Z > "$T/fx/sonarr-4k/$SINCE.json"
 run_verify
 expect verify-regrab 1
 result verify-regrab FAIL no-regrab 're-grabbed: sonarr-4k seriesId=1 '
+# A REPACK or PROPER of a protected item is an upgrade, not a re-grab. A grab
+# with revision version 1 (or no revision) still fails.
+verify_fixtures
+jq -n '[{id: 901, eventType: "grabbed", date: "2026-09-28T10:00:00Z", sourceTitle: "Some.Show.S01E45.REPACK.1080p",
+  episodeId: 101, quality: {quality: {name: "WEBDL-1080p"}, revision: {version: 2, real: 0, isRepack: true}}},
+  {id: 902, eventType: "grabbed", date: "2026-09-28T11:00:00Z", sourceTitle: "Some.Show.S01E46.PROPER.1080p",
+  episodeId: 102, quality: {quality: {name: "WEBDL-1080p"}, revision: {version: 2, real: 0, isRepack: false}}}]' \
+  > "$T/fx/sonarr/$SINCE.json"
+run_verify
+expect verify-upgrade 0
+result verify-upgrade PASS no-regrab '; upgrades=2; other=0$'
+verify_fixtures
+jq -n '[{id: 903, eventType: "grabbed", date: "2026-09-28T10:00:00Z", sourceTitle: "Some.Show.S01E45.REPACK.1080p",
+  episodeId: 101, quality: {revision: {version: 2, isRepack: true}}},
+  {id: 904, eventType: "grabbed", date: "2026-09-28T11:00:00Z", sourceTitle: "Some.Show.S01E47.1080p",
+  episodeId: 102, quality: {quality: {name: "WEBDL-1080p"}, revision: {version: 1, real: 0, isRepack: false}}}]' \
+  > "$T/fx/sonarr/$SINCE.json"
+run_verify
+expect verify-upgrade 1
+result verify-upgrade FAIL no-regrab 're-grabbed: sonarr episodeId=102 Some\.Show\.S01E47\.1080p; upgrades=1; other=0'
+ok "no-regrab: a REPACK/PROPER of a protected item is reported as upgrades=<n>; a normal grab of one still fails"
+
 # history/since 404 -> paged /history, filtered by date >= baseline.
 verify_fixtures
 printf '404\n' > "$T/fx/radarr/$SINCE.http"
