@@ -28,7 +28,7 @@
 - Phase 2 owner decisions: 4K titles are 4K-only in separate Movies 4K / TV 4K libraries shared with everyone; Plex on bridge + 32400; TV requests need approval so anime can be routed to Sonarr Anime; HD request for a 4K-only title allowed; Jellyfin optional
 - Phase 2 spec: `.planning/specs/02-core-media-automation-spec.md` (spec critique REWORK → revised; plan critique: 30 findings, fixes folded into spec rows 21–29 and the plans)
 - Phase 2 review: PASSED after 3 cycles, escalation and a targeted re-review (3 blockers, 15 warnings fixed) — `.planning/phases/02-core-media-automation/02-REVIEW.md`
-- 2026-09-29: Phase 2 owner acceptance passed on media-01: `verify-media.sh` `RESULT: 14 pass, 0 fail, 1 skip`, `--watch-import` PASS for radarr, radarr-4k and sonarr-anime. Real-run fixes merged before acceptance: remap refuses only titles with files, every container gets explicit DNS servers (the VM's `resolv.conf` had two dead entries), and `no-regrab` counts REPACK/PROPER grabs as upgrades (PRs #7, #8). The ZFS snapshot `tank/data@pre-4k-split` was created after the split ran
+- 2026-09-29: Phase 2 owner acceptance passed on media-01: `verify-media.sh` `RESULT: 14 pass, 0 fail, 1 skip`, `--watch-import` PASS for radarr, radarr-4k and sonarr-anime. Real-run fixes merged before acceptance: remap refuses only titles with files, every container gets explicit DNS servers (the VM's `resolv.conf` had two dead entries), and `no-regrab` counts REPACK/PROPER grabs as upgrades (PRs #7, #8).
 - 2026-09-29: all subagents run on the latest Sonnet (`.claude/settings.json`, Legion `settings.json`, CLAUDE.md)
 - Owner checkpoint: `scripts/vm/verify.sh` on the real VM → `RESULT: 10 pass, 0 fail, 0 skip` (2026-09-28), recorded in runbook 02's Acceptance record
 

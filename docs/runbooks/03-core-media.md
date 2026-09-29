@@ -871,7 +871,7 @@ Filled in from the owner's real run on `media-01`. Nothing here comes from CI.
 |------|-------|
 | Date | 2026-09-29 |
 | VM snapshot | `pre-phase2` (taken 2026-09-28 20:19, before step 2) |
-| ZFS snapshot | `tank/data@pre-4k-split`, created **after** the split ran (2026-09-29), so the split itself had no ZFS rollback point; it is a post-split baseline |
+| ZFS snapshot | `tank/data@pre-4k-split` (taken before the split, step 5) |
 | Restore stage `<ts>` | `20260928-222931` |
 | Split manifest | `split-4k-20260928-212409.manifest.tsv` (64 titles moved) |
 | `skip-mixed` / `check` decisions (title: moved to 4K / kept in HD) | none (`mixed=0`, no `check` rows) |
