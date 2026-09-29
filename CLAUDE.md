@@ -16,7 +16,7 @@ Guidance for Claude Code sessions working in this repository.
 - Delete `claude/...` branches after their PR merges into `dev`.
 
 ## Project workflow
-- Subagents run on the latest Sonnet: pass `model: "sonnet"` on every Agent call (Legion executors, reviewers, critics, fix agents, research helpers). `.claude/settings.json` sets `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` (forced), and the Legion `settings.json` sets `models.planning`/`execution`/`check` to `sonnet`, overriding the Claude Code adapter's opus/haiku defaults.
+- All models run on Sonnet 5.5 (`claude-sonnet-5-5`); never use Opus or Haiku. Pass `model: "sonnet"` on every Agent call (Legion executors, reviewers, critics, fix agents, research helpers). `.claude/settings.json` pins `model`, `ANTHROPIC_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL` (forced) to `claude-sonnet-5-5`, and the Legion `settings.json` sets `models.planning`/`execution`/`check` to `claude-sonnet-5-5`, overriding the Claude Code adapter's opus/haiku defaults.
 - Planning lives in `.planning/` (Legion): `PROJECT.md`, `ROADMAP.md`, `STATE.md`, and per-phase plans, summaries and reviews under `.planning/phases/`. Check `STATE.md` for the current phase and next action.
 - `.planning/specs/01-host-repo-foundation-spec.md` is the contract for script CLIs, output formats and `verify.sh` check IDs.
 

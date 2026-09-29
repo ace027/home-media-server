@@ -1,6 +1,8 @@
 {
+  "model": "claude-sonnet-5-5",
   "env": {
-    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "ANTHROPIC_MODEL": "claude-sonnet-5-5",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5-5",
     "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1"
   }
 }
