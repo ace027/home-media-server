@@ -108,6 +108,49 @@ test_traefik_hardening() {
   ok "traefik: no docker.sock, no :80 entrypoint, read-only, via socket-proxy"
 }
 
+test_ddns() {
+  jq -e '.services["cloudflare-ddns"].environment
+    | .UPDATE_CRON == "@every 5m"
+      and .PROXIED == "false"
+      and .CLOUDFLARE_API_TOKEN_FILE == "/run/secrets/cf_dns_api_token"
+      and (has("CLOUDFLARE_API_TOKEN") | not)' <<<"$FULL" >/dev/null \
+    || fail "cloudflare-ddns env is not UPDATE_CRON=@every 5m, PROXIED=false, token from the secret file"
+  jq -e '.services["cloudflare-ddns"].environment.DOMAINS | split(",")
+    | length == 3 and (.[0] | test("^plex\\.")) and (.[1] | test("^requests\\.")) and (.[2] | test("^auth\\."))' <<<"$FULL" >/dev/null \
+    || fail "cloudflare-ddns DOMAINS is not plex, requests, auth"
+  jq -e '.services["cloudflare-ddns"].secrets | any(.source == "cf_dns_api_token" and .target == "/run/secrets/cf_dns_api_token")' <<<"$FULL" >/dev/null \
+    || fail "cloudflare-ddns does not mount the cf_dns_api_token secret"
+  ok "cloudflare-ddns: every 5m, not proxied, plex/requests/auth, token from its secret"
+}
+
+test_acme_dns01() {
+  local cmd dom ca
+  cmd="$(jq -r '.services.traefik.command[]' <<<"$FULL")"
+  dom="$(sed -n 's/^--entrypoints\.websecure\.http\.tls\.domains\[0\]\.main=//p' <<<"$cmd")"
+  [[ -n "$dom" ]] || fail "websecure tls.domains[0].main is missing"
+  grep -qx -- '--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare' <<<"$cmd" \
+    || fail "acme dnschallenge.provider is not cloudflare"
+  grep -qxF -- "--entrypoints.websecure.http.tls.domains[0].sans=*.$dom,*.int.$dom" <<<"$cmd" \
+    || fail "websecure tls.domains[0].sans is not *.$dom,*.int.$dom"
+  grep -qx -- '--entrypoints.websecure.http.tls.certResolver=cloudflare' <<<"$cmd" \
+    || fail "websecure certResolver is not cloudflare"
+  grep -qx -- '--certificatesresolvers.cloudflare.acme.storage=/acme/acme.json' <<<"$cmd" \
+    || fail "acme storage is not /acme/acme.json"
+  ca="$(grep -E '^ACME_CASERVER=' .env | tail -n 1 | cut -d= -f2-)"
+  [[ -n "$ca" ]] || ca="$(sed -n 's/^ACME_CASERVER=//p' .env.example | tail -n 1)"
+  grep -qxF -- "--certificatesresolvers.cloudflare.acme.caServer=$ca" <<<"$cmd" \
+    || fail "acme caServer does not follow ACME_CASERVER"
+  jq -e '.services.traefik.secrets | any(.source == "cf_dns_api_token")' <<<"$FULL" >/dev/null \
+    || fail "traefik does not mount the cf_dns_api_token secret"
+  jq -e '.services.traefik.environment | has("CF_DNS_API_TOKEN_FILE") or has("CLOUDFLARE_DNS_API_TOKEN_FILE")' <<<"$FULL" >/dev/null \
+    || fail "traefik has no Cloudflare token file variable"
+  local tls="$REPO/config/traefik/dynamic/tls.yml"
+  [[ -f "$tls" ]] || fail "missing config/traefik/dynamic/tls.yml"
+  grep -qE '^[[:space:]]*minVersion: VersionTLS1[23]$' "$tls" || fail "tls.yml minVersion is not TLS 1.2 or 1.3"
+  grep -qE '^[[:space:]]*sniStrict: true$' "$tls" || fail "tls.yml lacks sniStrict: true"
+  ok "acme DNS-01 via cloudflare, wildcard SANs (*.$dom, *.int.$dom), storage, caServer, tls.yml"
+}
+
 test_socket_proxy() {
   jq -e '.services["socket-proxy"].volumes
     | any(.source == "/var/run/docker.sock" and .target == "/var/run/docker.sock" and .read_only == true)' <<<"$FULL" >/dev/null \
@@ -418,6 +461,8 @@ TESTS=(
   test_published_ports
   test_traefik_hardening
   test_socket_proxy
+  test_ddns
+  test_acme_dns01
   test_secret_paths
   test_edge_secrets
   test_verify_edge
