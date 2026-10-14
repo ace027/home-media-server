@@ -1,9 +1,9 @@
 # Project State
 
 ## Current Position
-- **Phase**: 2 of 6 (complete)
-- **Status**: Phase 2 complete — review passed and owner acceptance passed (`verify-media.sh`: 14 pass, 0 fail, 1 skip; three `--watch-import` PASS lines), recorded in runbook 03's Acceptance record
-- **Last Activity**: Phase 2 owner acceptance on the real VM (2026-09-29)
+- **Phase**: 3 of 6 (planned)
+- **Status**: Phase 3 planned -- 3 plans across 3 waves
+- **Last Activity**: Phase 3 planning (2026-10-14)
 
 ## Progress
 ```
@@ -14,6 +14,7 @@
 - Execution mode: Guided
 - Planning depth: Standard
 - Cost profile: Balanced
+- 2026-10-14: Phase 3 planned: Pragmatic approach (chosen over Minimal/Clean proposals), Seerr stays Plex-login only, 3 serial plans (03-01 Traefik core, 03-02 Authentik, 03-03 CrowdSec/geo-block + compose.lan.yaml removal); board quick-assess constraints adopted (single-zone CF token, socket proxy, headers, rate limit, separate networks, fail-closed forward-auth)
 - 2026-10-14: forced-Sonnet subagent rule removed (`.claude/settings.json` deleted, CLAUDE.md line dropped); agents use Triad tiers (Opus orchestrator and open-ended coder, Sonnet coder, Haiku helper)
 - 2026-10-14: moved from Legion to the Triad plugin (`/legion:*` → `/triad:*`); `/triad validate` failures fixed (`user_setup` items in 01-04 and 02-04 are now `{task: ...}` objects)
 - Design source: `.planning/explorations/2026-09-23-home-media-server-design.md`
@@ -35,6 +36,7 @@
 - Owner checkpoint: `scripts/vm/verify.sh` on the real VM → `RESULT: 10 pass, 0 fail, 0 skip` (2026-09-28), recorded in runbook 02's Acceptance record
 
 ## GitHub
+- Phase 3 issue: #11 (https://github.com/ace027/home-media-server/issues/11), open
 - Phase 1 issue: #1 (https://github.com/ace027/home-media-server/issues/1), closed
 - Phase 2 issue: #5 (https://github.com/ace027/home-media-server/issues/5), closed on review pass
 - Branches: `main` (default, released), `dev` (integration; all work branches from and merges into `dev`)
@@ -42,6 +44,4 @@
 - Phase 1 PR: #3 `dev` → `main` (https://github.com/ace027/home-media-server/pull/3; supersedes #2, which was opened from a now-retired `claude/` branch); includes review fixes 5d72178, 0a01d43
 
 ## Next Action
-Run `/triad:plan 3` to plan Phase 3: Edge & Secure Access. Housekeeping when convenient: empty the Plex trash (its gates passed), remove the two dead nameservers from the VM's `/etc/resolv.conf`, and after a few days of normal use decide whether to delete the old library copies in `/tank/{movies,shows,anime}` and the `pre-phase2` / `pre-migration` snapshots
-
-Hardware state (2026-09-28): pool imported on the new host and trimmed (autotrim on); library copied into `tank/data/media` and verified (movies 89, tv 820, anime-tv 1058 files; no music on the old pool); ownership 1000:1000; originals kept in `/tank/{movies,shows,anime}` plus `tank@pre-migration` until Phase 2 confirms the library. IOMMU/vfio active (A380 + audio on vfio-pci), ZFS ARC capped at 2 GB. VM 200 `media-01` (Debian 13) at 192.168.50.16 with Docker, `/data` over virtiofs and the TRaSH tree. Old app configs are in `/tank/migration/old-docker-2026-09-27.tar.zst` for Phase 2.
+Run `/triad:build` to execute Phase 3: Edge & Secure Access
