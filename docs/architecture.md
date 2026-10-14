@@ -119,7 +119,7 @@ Traefik applies four middleware chains, defined once as labels on the `traefik` 
 | Chain | Middlewares | Used by |
 |-------|-------------|---------|
 | `int` | `lan-only`, `secure-headers`, `authentik` | Every `*.int.<domain>` route and the Traefik dashboard |
-| `lan-admin` | `lan-only`, `secure-headers` | Authentik's own `/if/admin` and its admin-only `/api/v3/` prefixes (no forward-auth, or it would protect itself) |
+| `lan-admin` | `lan-only`, `secure-headers` | Authentik's own `/if/admin` and all of its `/api/` except a short public allowlist for the flows and the user interface (no forward-auth, or it would protect itself) |
 | `public` | `crowdsec`, `geoblock`, `rate-limit`, `secure-headers` | The internet-facing routes: Seerr, and Jellyfin if adopted |
 | `public-auth` | `crowdsec`, `geoblock`, `auth-rate-limit`, `secure-headers` | The Authentik login (`auth.<domain>`), with a stricter per-address rate limit |
 

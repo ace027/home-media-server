@@ -282,36 +282,42 @@ services:
       - traefik.http.routers.auth-admin.middlewares=lan-admin@docker
       - traefik.http.routers.auth-admin.priority=100
       - traefik.http.routers.auth-admin.service=authentik
-      # Admin-only API: LAN/Twingate only, so a stolen admin session or API token is
-      # useless from the internet for these endpoints. Priority 110: above auth (whose
-      # priority is its short rule's length) and auth-admin (no overlap with /if/admin).
-      # The list is the /api/v3/ prefixes that only the admin interface calls. Derived from
-      # the 2026.8.3 image's web bundle (/web/dist): following the imports of
-      # AdminInterface, FlowInterface, UserInterface, rac and api-browser, and mapping the
-      # generated-client methods each one calls to their paths. Everything the flow
-      # executor, login, enrollment, recovery, invitation and the user interface call
-      # stays public: flows/executor, flows/inspector, flows/instances, root/config,
-      # admin/version, core/users/me, switch, account_lockdown, impersonate_end,
-      # core/applications, core/tokens, core/brands, core/authenticated_sessions,
-      # core/user_consent, authenticators/<type>/ (own devices), stages/all,
-      # stages/authenticator/duo, sources/all, plex, telegram, user_connections,
-      # events/notifications, rac/endpoints, requests/grant-requests, agents, enterprise.
-      # The forward-auth outpost (/outpost.goauthentik.io) is not under /api/v3/.
-      # Re-derive it on every Authentik upgrade (runbook 04, section 6.8).
-      # One regex; the backslash-newlines (YAML double-quoted folding) join the parts with
-      # no spaces, so the label is a single line.
-      - "traefik.http.routers.auth-admin-api.rule=Host(`auth.${DOMAIN}`) && PathRegexp(`^/api/v3/(\
-        crypto|endpoints|lifecycle|managed|oauth2|outposts|policies|propertymappings|providers|\
-        rbac|reports|ssf|tasks|\
-        admin/(apps|file|models|settings|system)|authenticators/admin|\
-        core/(groups|object_attributes|transactional)|core/users/(export|paths|service_account|[0-9]+)|\
-        events/(events|rules|transports)|flows/bindings|rac/connection_tokens|\
-        requests/(rules|rule-bindings|rule-child-bindings)|\
-        sources/(group_connections|kerberos|ldap|oauth|saml|scim|scim_groups|scim_users)|\
-        stages/(account_lockdown|captcha|consent|deny|dummy|email|endpoints|identification|invitation|\
-        mtls|password|prompt|redirect|source|user_delete|user_login|user_logout|user_write|\
-        authenticator/(email|endpoint_gdtc|sms|static|totp|validate|webauthn|webauthn_device_types))\
-        )/|^/api/v3/core/users/?$$`)"
+      # Authentik API, fail closed: everything under /api/ is LAN/Twingate only
+      # (auth-admin-api, priority 110), so a stolen admin session or API token is useless
+      # from the internet and endpoints added by a future Authentik release are LAN-only
+      # until someone allowlists them. auth-public-api (priority 120) re-opens, per HTTP
+      # method, only the exact paths the login/enrollment/recovery/invitation flows and the
+      # user interface (/if/user/) call. Derived from the 2026.8.3 image's web bundle
+      # (/web/dist): following the imports of the FlowInterface and UserInterface entries
+      # (never AdminInterface) and mapping the generated API client methods they call to
+      # paths, then dropping features this stack does not use (agents, access requests,
+      # RAC, Plex/Telegram/OAuth/SAML sources, Duo, the flow inspector, account switching
+      # and self-lockdown) and every write a stolen session could abuse (token create,
+      # update and view_key, flows/instances incl. import_flow). Paths need the trailing
+      # slash Authentik's client always sends. The forward-auth outpost
+      # (/outpost.goauthentik.io) and the HTML pages (/if/, /flows/, /-/) are not under
+      # /api/ and stay on auth. Re-derive on every Authentik upgrade (runbook 04, 6.8).
+      # Priorities: auth-public-api 120 > auth-admin-api 110 > auth-admin 100 > auth.
+      # The backslash-newlines (YAML double-quoted folding) join the parts with no
+      # spaces, so each label is a single line.
+      - "traefik.http.routers.auth-public-api.rule=Host(`auth.${DOMAIN}`) && (\
+        (Method(`GET`) && PathRegexp(`^/api/v3/(\
+        root/config|admin/version|core/brands/current|core/users/me|core/users/impersonate_end|\
+        core/applications|core/tokens|core/user_consent|core/user_consent/[0-9]+/used_by|\
+        core/authenticated_sessions|core/authenticated_sessions/[0-9a-f-]+/used_by|\
+        authenticators/all|stages/all/user_settings|sources/all/user_settings|\
+        sources/user_connections/all|events/notifications|enterprise/license/summary|\
+        flows/executor/[-a-zA-Z0-9_]+)/$$`)) || \
+        (Method(`POST`) && PathRegexp(`^/api/v3/(flows/executor/[-a-zA-Z0-9_]+|events/notifications/mark_all_seen)/$$`)) || \
+        (Method(`PUT`) && PathRegexp(`^/api/v3/authenticators/(static|totp|webauthn)/[0-9]+/$$`)) || \
+        (Method(`PATCH`) && PathRegexp(`^/api/v3/events/notifications/[0-9a-f-]+/$$`)) || \
+        (Method(`DELETE`) && PathRegexp(`^/api/v3/(\
+        authenticators/(static|totp|webauthn)/[0-9]+|\
+        core/authenticated_sessions/[0-9a-f-]+|core/user_consent/[0-9]+)/$$`)))"
+      - traefik.http.routers.auth-public-api.middlewares=public-auth@docker
+      - traefik.http.routers.auth-public-api.priority=120
+      - traefik.http.routers.auth-public-api.service=authentik
+      - traefik.http.routers.auth-admin-api.rule=Host(`auth.${DOMAIN}`) && PathRegexp(`^/api(/|$$)`)
       - traefik.http.routers.auth-admin-api.middlewares=lan-admin@docker
       - traefik.http.routers.auth-admin-api.priority=110
       - traefik.http.routers.auth-admin-api.service=authentik

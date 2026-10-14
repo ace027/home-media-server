@@ -58,15 +58,15 @@ test_only_seerr_is_public() {
   others="$(jq -r '[.services | to_entries[] | .value.labels // {} | to_entries[]
     | select((.key | test("^traefik\\.http\\.routers\\.[^.]+\\.middlewares$")) and .value != "int@docker")
     | "\(.key | capture("routers\\.(?<r>[^.]+)\\.").r)=\(.value)"] | sort | join(",")' <<<"$FULL")"
-  [[ "$others" == "auth-admin-api=lan-admin@docker,auth-admin=lan-admin@docker,auth=public-auth@docker,seerr=public@docker" ]] \
-    || fail "routers not using int@docker: '$others' (want only auth-admin and auth-admin-api=lan-admin@docker, auth=public-auth@docker, seerr=public@docker)"
+  [[ "$others" == "auth-admin-api=lan-admin@docker,auth-admin=lan-admin@docker,auth-public-api=public-auth@docker,auth=public-auth@docker,seerr=public@docker" ]] \
+    || fail "routers not using int@docker: '$others' (want only auth-admin and auth-admin-api=lan-admin@docker, auth and auth-public-api=public-auth@docker, seerr=public@docker)"
   jq -e '.services.seerr.labels["traefik.http.routers.seerr.rule"] | test("^Host\\(`requests\\.[^`]+`\\)$")' <<<"$FULL" >/dev/null \
     || fail "seerr rule is not Host(\`requests.<domain>\`)"
   jq -e '.services.traefik.labels["traefik.http.routers.dashboard.rule"] | test("^Host\\(`traefik\\.int\\.[^`]+`\\)$")' <<<"$FULL" >/dev/null \
     || fail "dashboard rule is not Host(\`traefik.int.<domain>\`)"
   jq -e '.services.traefik.labels["traefik.http.routers.dashboard.service"] == "api@internal"' <<<"$FULL" >/dev/null \
     || fail "dashboard router service is not api@internal"
-  ok "only seerr (public) and auth (public-auth) are internet-facing (plus auth-admin, auth-admin-api on lan-admin); the dashboard is on traefik.int"
+  ok "only seerr (public), auth and auth-public-api (public-auth) are internet-facing (auth-admin, auth-admin-api on lan-admin); the dashboard is on traefik.int"
 }
 
 test_chains() {
@@ -241,52 +241,81 @@ test_auth_routers() {
   ok "auth is public-auth without forward-auth; auth-admin (/if/admin) is lan-admin with priority 100"
 }
 
-# Admin-only Authentik API prefixes (derived from the 2026.8.3 web bundle, see the
-# comment on the auth-admin-api router) and paths the flow executor, the user
-# interface and the outpost need, which must stay on the public auth router.
-AK_ADMIN_PATHS=(/api/v3/policies/all/ /api/v3/policies/bindings/ /api/v3/propertymappings/all/
-  /api/v3/providers/proxy/ /api/v3/outposts/instances/ /api/v3/rbac/roles/ /api/v3/managed/blueprints/
-  /api/v3/admin/system/ /api/v3/admin/settings/ /api/v3/crypto/certificatekeypairs/
-  /api/v3/events/rules/ /api/v3/events/transports/ /api/v3/events/events/ /api/v3/flows/bindings/
-  /api/v3/stages/prompt/stages/ /api/v3/stages/invitation/invitations/ /api/v3/stages/authenticator/totp/
-  /api/v3/sources/oauth/ /api/v3/sources/ldap/ /api/v3/core/groups/ /api/v3/core/users/
-  /api/v3/core/users/7/set_password/ /api/v3/core/users/7/recovery/ /api/v3/authenticators/admin/all/
-  /api/v3/tasks/tasks/ /api/v3/oauth2/access_tokens/)
-AK_PUBLIC_PATHS=(/api/v3/root/config/ /api/v3/flows/executor/default-authentication-flow/
-  /api/v3/flows/instances/default-authentication-flow/ /api/v3/flows/inspector/x/
-  /api/v3/core/users/me/ /api/v3/core/users/switch/ /api/v3/core/applications/ /api/v3/core/tokens/
-  /api/v3/core/tokens/abc/view_key/ /api/v3/core/brands/current/ /api/v3/core/authenticated_sessions/
-  /api/v3/core/user_consent/ /api/v3/authenticators/all/ /api/v3/authenticators/totp/3/
-  /api/v3/authenticators/webauthn/3/ /api/v3/stages/all/user_settings/
-  /api/v3/stages/authenticator/duo/x/enrollment_status/ /api/v3/sources/all/user_settings/
-  /api/v3/sources/plex/redeem_token/ /api/v3/sources/user_connections/all/ /api/v3/admin/version/
-  /api/v3/events/notifications/ /api/v3/rac/endpoints/ /api/v3/requests/grant-requests/
-  /api/v3/ /outpost.goauthentik.io/auth/traefik /if/user/ /if/flow/default-authentication-flow/
-  /-/health/live/)
+# Authentik API exposure (fail closed). "<method> <path>" probes: AK_API_PUBLIC must be
+# matched by the auth-public-api allowlist (flows and the user interface need them);
+# AK_API_LAN must not be (they fall to auth-admin-api, LAN only). Derived from the
+# 2026.8.3 web bundle, see the comment on the routers in stacks/edge.yaml.
+AK_API_PUBLIC=("GET /api/v3/root/config/" "GET /api/v3/admin/version/" "GET /api/v3/core/brands/current/"
+  "GET /api/v3/core/users/me/" "GET /api/v3/core/users/impersonate_end/" "GET /api/v3/core/applications/"
+  "GET /api/v3/core/tokens/" "GET /api/v3/core/user_consent/" "GET /api/v3/core/user_consent/3/used_by/"
+  "DELETE /api/v3/core/user_consent/3/" "GET /api/v3/core/authenticated_sessions/"
+  "DELETE /api/v3/core/authenticated_sessions/5e1b2c3d-1111-2222-3333-444455556666/"
+  "GET /api/v3/authenticators/all/" "PUT /api/v3/authenticators/totp/3/" "DELETE /api/v3/authenticators/webauthn/3/"
+  "DELETE /api/v3/authenticators/static/3/" "GET /api/v3/stages/all/user_settings/"
+  "GET /api/v3/sources/all/user_settings/" "GET /api/v3/sources/user_connections/all/"
+  "GET /api/v3/events/notifications/" "POST /api/v3/events/notifications/mark_all_seen/"
+  "PATCH /api/v3/events/notifications/5e1b2c3d-1111-2222-3333-444455556666/"
+  "GET /api/v3/enterprise/license/summary/" "GET /api/v3/flows/executor/default-authentication-flow/"
+  "POST /api/v3/flows/executor/invitation-enrollment/" "POST /api/v3/flows/executor/default-recovery-flow/")
+AK_API_LAN=("GET /api/v3/policies/all/" "GET /api/v3/flows/instances/" "POST /api/v3/flows/instances/import_flow/"
+  "GET /api/v3/flows/instances/x/export/" "GET /api/v3/flows/instances/x/" "POST /api/v3/core/tokens/"
+  "PUT /api/v3/core/tokens/abc/" "GET /api/v3/core/tokens/abc/view_key/" "DELETE /api/v3/core/tokens/abc/"
+  "POST /api/v3/core/applications/" "PUT /api/v3/core/applications/x/" "GET /api/v3/core/applications/x/"
+  "GET /api/v3/core/brands/" "POST /api/v3/core/brands/" "GET /api/v3/core/users/"
+  "POST /api/v3/core/users/7/set_password/" "POST /api/v3/core/users/switch/"
+  "POST /api/v3/core/users/account_lockdown/" "GET /api/v3/newthing/" "GET /api/v3/" "GET /api/v3/schema/"
+  "GET /api/v3/admin/system/" "GET /api/v3/flows/inspector/x/" "GET /api/v3/agents/agents/"
+  "GET /api/v3/root/config" "DELETE /api/v3/flows/executor/x/" "PUT /api/v3/authenticators/totp/abc/"
+  "GET /api/v3/authenticators/admin/all/" "GET /api/v3/stages/authenticator/totp/" "GET /api/v3/managed/blueprints/"
+  "HEAD /api/v3/root/config/")
 
-test_auth_admin_api_router() {
-  local rule re p
-  jq -e '.services["authentik-server"].labels
-    | .["traefik.http.routers.auth-admin-api.middlewares"] == "lan-admin@docker"
-      and .["traefik.http.routers.auth-admin-api.service"] == "authentik"
-      and (.["traefik.http.routers.auth-admin-api.priority"] | tonumber) > 100
-      and (has("traefik.http.routers.auth.priority") | not)' <<<"$FULL" >/dev/null \
-    || fail "auth-admin-api is not lan-admin@docker -> authentik with a priority above auth-admin (100) and auth"
-  rule="$(jq -r '.services["authentik-server"].labels["traefik.http.routers.auth-admin-api.rule"]' <<<"$FULL")"
-  [[ "$rule" =~ ^Host\(\`auth\.[^\`]+\`\)\ \&\&\ PathRegexp\(\`(.+)\`\)$ ]] \
-    || fail "auth-admin-api rule is not Host(auth.<domain>) && PathRegexp(...)" "$rule"
+test_auth_api_routers() {
+  local labels pub adm pairs probe m p n_pub=0 n_lan=0
+  labels="$(jq '.services["authentik-server"].labels' <<<"$FULL")"
+  jq -e '(.["traefik.http.routers.auth-public-api.priority"] | tonumber) > (.["traefik.http.routers.auth-admin-api.priority"] | tonumber)
+      and (.["traefik.http.routers.auth-admin-api.priority"] | tonumber) > (.["traefik.http.routers.auth-admin.priority"] | tonumber)
+      and (has("traefik.http.routers.auth.priority") | not)
+      and .["traefik.http.routers.auth-public-api.middlewares"] == "public-auth@docker"
+      and .["traefik.http.routers.auth-admin-api.middlewares"] == "lan-admin@docker"
+      and .["traefik.http.routers.auth-public-api.service"] == "authentik"
+      and .["traefik.http.routers.auth-admin-api.service"] == "authentik"' <<<"$labels" >/dev/null \
+    || fail "auth API routers: want auth-public-api (public-auth) > auth-admin-api (lan-admin) > auth-admin priority, auth unset"
   # docker compose config re-escapes \$ as \$\$; the container label has a single \$.
-  re="${BASH_REMATCH[1]//\$\$/\$}"
-  for p in "${AK_ADMIN_PATHS[@]}"; do
-    jq -en --arg p "$p" --arg re "$re" '$p | test($re)' >/dev/null \
-      || fail "auth-admin-api rule does not cover admin-only $p"
+  adm="$(jq -r '.["traefik.http.routers.auth-admin-api.rule"]' <<<"$labels")"
+  adm="${adm//\$\$/\$}"
+  [[ "$adm" =~ ^Host\(\`auth\.[^\`]+\`\)\ \&\&\ PathRegexp\(\`\^/api\(/\|\$\)\`\)$ ]] \
+    || fail "auth-admin-api must cover all of /api/ (Host(auth.<domain>) && PathRegexp(^/api(/|\$)))" "$adm"
+  pub="$(jq -r '.["traefik.http.routers.auth-public-api.rule"]' <<<"$labels")"
+  pub="${pub//\$\$/\$}"
+  [[ "$pub" =~ ^Host\(\`auth\.[^\`]+\`\)\ \&\&\ \( ]] || fail "auth-public-api rule does not start with Host(auth.<domain>) && (" "$pub"
+  # Every alternative must be Method(...) && PathRegexp(^/api/v3/...$): nothing else, so
+  # the allowlist cannot grow a method-less or unanchored branch.
+  # shellcheck disable=SC2016 # backticks are literal Traefik rule syntax
+  pairs="$(grep -oE 'Method\(`[A-Z]+`\) && PathRegexp\(`[^`]+`\)' <<<"$pub" | sed -E 's/^Method\(`([A-Z]+)`\) && PathRegexp\(`([^`]+)`\)$/\1 \2/')"
+  [[ "$(grep -o 'PathRegexp(' <<<"$pub" | wc -l)" -eq "$(grep -c . <<<"$pairs")" ]] \
+    || fail "auth-public-api has a PathRegexp without a Method()" "$pub"
+  if grep -vqE '^[A-Z]+ \^/api/v3/.*\$$' <<<"$pairs"; then
+    fail "auth-public-api has a regex not anchored as ^/api/v3/...\$" "$pairs"
+  fi
+  # matches <method> <path>: does any (method, regex) pair of the allowlist match?
+  matches() {
+    jq -Rn --arg m "$1" --arg p "$2" '[inputs | capture("^(?<m>[A-Z]+) (?<re>.+)$") | select(.m == $m) | .re]
+      | any(. as $re | $p | test($re))' <<<"$pairs" | grep -qx true
+  }
+  for probe in "${AK_API_PUBLIC[@]}"; do
+    read -r m p <<<"$probe"
+    matches "$m" "$p" || fail "auth-public-api does not allow $m $p (flows or the user interface need it)"
+    n_pub=$((n_pub + 1))
   done
-  for p in "${AK_PUBLIC_PATHS[@]}"; do
-    if jq -en --arg p "$p" --arg re "$re" '$p | test($re)' >/dev/null; then
-      fail "auth-admin-api rule would make $p LAN-only (flows, the user interface or the outpost need it)"
+  for probe in "${AK_API_LAN[@]}"; do
+    read -r m p <<<"$probe"
+    if matches "$m" "$p"; then
+      fail "auth-public-api makes $m $p public (it must stay LAN-only)"
     fi
+    jq -en --arg p "$p" '$p | test("^/api(/|$)")' >/dev/null || fail "auth-admin-api does not cover $p"
+    n_lan=$((n_lan + 1))
   done
-  ok "auth-admin-api: lan-admin, priority above auth-admin; covers ${#AK_ADMIN_PATHS[@]} admin-only paths, spares ${#AK_PUBLIC_PATHS[@]} public ones"
+  ok "Authentik API fails closed: /api/ LAN-only, allowlist passes $n_pub flow/user calls and refuses $n_lan admin or unlisted ones"
 }
 
 test_authentik_services() {
@@ -634,7 +663,7 @@ TESTS=(
   test_verify_edge
   test_authentik_networks
   test_auth_routers
-  test_auth_admin_api_router
+  test_auth_api_routers
   test_invitation_password_policy
   test_authentik_services
   test_blueprints

@@ -4,11 +4,13 @@
 # CrowdSec writing/reading the same open file.
 # The log holds client IPs and full request URLs (including one-time recovery and
 # invitation tokens), so only two weeks are kept. The logs directory is 0750 (mkdirs.sh),
-# which is what keeps other users out; `create` only takes effect if copytruncate is
-# ever dropped (copytruncate leaves the original file in place).
+# which is what keeps other users out. `create` is moot while copytruncate is set (the
+# original file stays in place and keeps its mode); it is kept so the rule stays safe
+# if copytruncate is ever dropped.
 # logrotate cannot read .env: 1000 1000 below is PUID PGID (Traefik writes the log as
 # PUID). Edit both lines if your PUID/PGID differ. `su` makes logrotate work as that
-# user in the PUID-owned logs directory instead of as root.
+# user in the PUID-owned logs directory instead of as root. If `logrotate -d` rejects
+# the numeric ids, use the PUID user's and group's names instead (e.g. su media media).
 /opt/appdata/traefik/logs/*.log {
     su 1000 1000
     create 0640 1000 1000

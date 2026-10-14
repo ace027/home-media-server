@@ -45,8 +45,9 @@ cert-wildcard: a production Let's Encrypt wildcard, SKIP on staging;
 authentik-healthy: authentik-server and authentik-db healthy, authentik-worker running;
 auth-public: https://auth.<domain>/-/health/live/ answers 200 or 204;
 authentik-admin-lan: from outside LAN_CIDR /if/admin/ is 403 and /-/health/live/ is not;
-authentik-admin-api-lan: from outside LAN_CIDR the admin-only API /api/v3/policies/all/
-is 403 and the public /api/v3/root/config/ is 200;
+authentik-admin-api-lan: from outside LAN_CIDR /api/v3/policies/all/, an unlisted
+/api/v3/newthing/ and encoded variants (//api, %70olicies, policies%2Fall) are 403,
+/API/v3/... is 403 or 404, and the allowlisted /api/v3/root/config/ is 200;
 int-forward-auth: the outpost answers an unauthenticated sonarr.int request with a
 302 to https://auth.<domain>/;
 authentik-mfa: via /api/v3/, admins-only-mfa is bound to the MFA validation stage
@@ -382,20 +383,31 @@ check_authentik_admin_lan() {
 }
 
 check_authentik_admin_api_lan() {
-  local id=authentik-admin-api-lan ip admin pub
+  local id=authentik-admin-api-lan ip code pub path bad=()
   net_skip "$id" && return 0
   ip="$(traefik_ip)"
   [[ -n "$ip" ]] || { fail "$id" "traefik has no address on the proxy network"; return 0; }
-  # Same vantage point as authentik-admin-lan. The auth-admin-api router answers 403
-  # before Authentik sees the request, so no session or token is needed.
-  admin="$(proxy_curl -sk --max-time 15 -o /dev/null -w '%{http_code}' \
-    --resolve "auth.$DOMAIN:443:$ip" "https://auth.$DOMAIN/api/v3/policies/all/")" || admin=""
+  # Same vantage point as authentik-admin-lan. auth-admin-api answers 403 before Authentik
+  # sees the request, so no session or token is needed. Probes: an admin endpoint, an
+  # endpoint no allowlist knows (fail closed), and encodings of the admin endpoint that
+  # must not slip past the router (--path-as-is keeps them as sent).
+  for path in /api/v3/policies/all/ /api/v3/newthing/ //api/v3/policies/all/ \
+      /api/v3/%70olicies/all/ /api/v3/policies%2Fall/; do
+    code="$(proxy_curl -sk --path-as-is --max-time 15 -o /dev/null -w '%{http_code}' \
+      --resolve "auth.$DOMAIN:443:$ip" "https://auth.$DOMAIN$path")" || code=""
+    [[ "$code" == 403 ]] || bad+=("$path -> ${code:-no response} (want 403)")
+  done
+  # Routing is case-sensitive: /API/ is not the API, Authentik answers 404.
+  code="$(proxy_curl -sk --max-time 15 -o /dev/null -w '%{http_code}' \
+    --resolve "auth.$DOMAIN:443:$ip" "https://auth.$DOMAIN/API/v3/policies/all/")" || code=""
+  [[ "$code" == 403 || "$code" == 404 ]] || bad+=("/API/v3/policies/all/ -> ${code:-no response} (want 403 or 404)")
   pub="$(proxy_curl -sk --max-time 15 -o /dev/null -w '%{http_code}' \
     --resolve "auth.$DOMAIN:443:$ip" "https://auth.$DOMAIN/api/v3/root/config/")" || pub=""
-  if [[ "$admin" == 403 && "$pub" == 200 ]]; then
-    pass "$id" "from outside $LAN_CIDR: /api/v3/policies/all/ -> 403, /api/v3/root/config/ -> 200"
+  [[ "$pub" == 200 ]] || bad+=("/api/v3/root/config/ -> ${pub:-no response} (want 200, allowlisted)")
+  if [[ ${#bad[@]} -gt 0 ]]; then
+    fail "$id" "from outside $LAN_CIDR: $(list "${bad[@]}")"
   else
-    fail "$id" "from outside $LAN_CIDR: /api/v3/policies/all/ -> ${admin:-no response} (want 403), /api/v3/root/config/ -> ${pub:-no response} (want 200)"
+    pass "$id" "from outside $LAN_CIDR: admin, unlisted and encoded /api/v3/ paths -> 403, /API/ -> $code, /api/v3/root/config/ -> 200"
   fi
 }
 

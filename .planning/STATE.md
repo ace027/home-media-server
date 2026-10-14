@@ -14,6 +14,7 @@
 - Execution mode: Guided
 - Planning depth: Standard
 - Cost profile: Balanced
+- 2026-10-14: Phase 3 built, review PASSED (2 cycles) and security review PASS; owner-approved follow-ups fixed: split Cloudflare tokens (Zone:Read + DNS:Edit), CrowdSec-healthy start order, ACME staging default, logrotate, Authentik API fail-closed (all /api/ LAN-only except a per-method public allowlist), auth rate limit + invitee zxcvbn/HIBP, Traefik plugins commit-pinned as local plugins (no GitHub fetch at start)
 - 2026-10-14: Phase 3 planned: Pragmatic approach (chosen over Minimal/Clean proposals), Seerr stays Plex-login only, 3 serial plans (03-01 Traefik core, 03-02 Authentik, 03-03 CrowdSec/geo-block + compose.lan.yaml removal); board quick-assess constraints adopted (single-zone CF token, socket proxy, headers, rate limit, separate networks, fail-closed forward-auth)
 - 2026-10-14: forced-Sonnet subagent rule removed (`.claude/settings.json` deleted, CLAUDE.md line dropped); agents use Triad tiers (Opus orchestrator and open-ended coder, Sonnet coder, Haiku helper)
 - 2026-10-14: moved from Legion to the Triad plugin (`/legion:*` → `/triad:*`); `/triad validate` failures fixed (`user_setup` items in 01-04 and 02-04 are now `{task: ...}` objects)
@@ -44,7 +45,7 @@
 - Phase 1 PR: #3 `dev` → `main` (https://github.com/ace027/home-media-server/pull/3; supersedes #2, which was opened from a now-retired `claude/` branch); includes review fixes 5d72178, 0a01d43
 
 ## Next Action
-Run `/triad:plan 4` to plan Phase 4: Quality Automation & AV1
+Owner acceptance of Phase 3 on media-01: follow `docs/runbooks/04-edge-access.md` (two Cloudflare tokens with Zone:Read + DNS:Edit, `40-edge-secrets.sh` and `45-traefik-plugins.sh` with `--apply`, ACME staging first, then production) and paste the real results into its Acceptance record (`verify-edge.sh --ban-test` 0 fail with `PASS cert-wildcard`, DDNS within 5 min, external scan 443/32400 only, `*.int` 403 off-LAN, Authentik login + MFA over Twingate, geo-block, Plex Fully accessible). Then `/triad:plan 4` (Quality Automation & AV1). Phase 3 is on `ccr-456c7608-lvz7s2`, not yet merged into `dev`
 
 ## Phase 3 Results
 (build started 2026-10-14)

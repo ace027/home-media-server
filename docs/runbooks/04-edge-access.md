@@ -289,9 +289,9 @@ puts them back.
 `auth.<domain>` itself is public (login pages, behind `public-auth@docker`:
 CrowdSec, geo-block, a login rate limit of 5 requests per second per client
 address with bursts of 20, and the secure headers), but its admin interface,
-`/if/admin/`, and the admin-only part of its API answer only the LAN and
-Twingate (`lan-admin@docker`; routers `auth-admin`, priority 100, and
-`auth-admin-api`, priority 110, see 6.8). Redis is not used: since 2025.10
+`/if/admin/`, and its whole API apart from a short allowlist the flows and
+the user interface need answer only the LAN and Twingate (`lan-admin@docker`;
+routers `auth-admin` and `auth-admin-api`, see 6.8). Redis is not used: since 2025.10
 Authentik keeps its cache and task queue in Postgres.
 
 ### 6.1 First start and bootstrap login
@@ -441,67 +441,82 @@ cookie from requests; the cookie alone is still useless from outside the LAN
 and Twingate, because every `*.int` route also needs the `lan-only`
 allowlist. Do not put Seerr behind forward-auth without revisiting this.
 
-### 6.8 Admin API from the LAN only
+### 6.8 Authentik API: LAN only by default
 
 A stolen admin session cookie or API token must not be usable from the
-internet. `/if/admin/` alone is not enough, because the admin interface is
-just a client of `/api/v3/`. The `auth-admin-api` router (in
-`stacks/edge.yaml`, on `authentik-server`) therefore sends every admin-only
-API prefix through `lan-admin@docker`, so these answer 403 from outside
-`LAN_CIDR` before Authentik sees the request:
+internet, and `/if/admin/` alone does not ensure that: the admin interface is
+just a client of `/api/v3/`. The API is therefore **closed by default**:
 
-- whole groups: `crypto`, `endpoints`, `lifecycle`, `managed` (blueprints),
-  `oauth2`, `outposts`, `policies`, `propertymappings`, `providers`, `rbac`,
-  `reports`, `ssf`, `tasks`;
-- inside shared groups: `admin/{apps,file,models,settings,system}`,
-  `authenticators/admin`, `core/{groups,object_attributes,transactional}`,
-  the user list `core/users/` and `core/users/{export,paths,service_account,<id>}`
-  (set password, recovery links, impersonation), `events/{events,rules,transports}`,
-  `flows/bindings`, `rac/connection_tokens`,
-  `requests/{rules,rule-bindings,rule-child-bindings}`,
-  `sources/{group_connections,kerberos,ldap,oauth,saml,scim,scim_groups,scim_users}`,
-  and every `stages/...` admin endpoint except `stages/all` and
-  `stages/authenticator/duo`.
+- `auth-admin-api` (priority 110, `lan-admin@docker`) takes **every** path
+  under `/api/`, so all of it answers 403 from outside `LAN_CIDR`, including
+  any endpoint a future Authentik release adds.
+- `auth-public-api` (priority 120, `public-auth@docker`) re-opens only the
+  exact paths, per HTTP method, that the login, enrollment, recovery and
+  invitation flows and the user interface (`/if/user/`) need.
+- Priorities: `auth-public-api` 120 > `auth-admin-api` 110 > `auth-admin`
+  (`/if/admin`) 100 > `auth` (everything else on `auth.<domain>`). The
+  forward-auth outpost (`/outpost.goauthentik.io/`), the flow and user pages
+  (`/if/flow/`, `/if/user/`), static files and `/-/health/` are not under
+  `/api/` and stay on `auth`.
 
-Everything else stays public, because the login, enrollment, recovery and
-invitation flows, the user interface (`/if/user/`) and the forward-auth
-outpost (`/outpost.goauthentik.io/`, not under `/api/v3/`) use it:
-`flows/executor`, `flows/inspector`, `flows/instances`, `root/config`,
-`admin/version`, `core/users/me`, `core/users/switch`, `core/applications`,
-`core/tokens` (your own tokens), `core/brands/current`,
-`core/authenticated_sessions`, `core/user_consent`, `authenticators/<type>/`
-(your own devices), `stages/all/user_settings`, `sources/all`, `sources/plex`,
-`sources/user_connections`, `events/notifications`, `rac/endpoints` and
-`requests/grant-requests`.
+**What is public** (all under `/api/v3/`, trailing slash included):
+
+| Method | Paths | Needed by |
+|---|---|---|
+| GET, POST | `flows/executor/<slug>/` | every flow: login, MFA, enrollment, invitation, recovery |
+| GET | `root/config/`, `admin/version/`, `core/brands/current/`, `enterprise/license/summary/` | loaded by every page |
+| GET | `core/users/me/`, `core/users/impersonate_end/` | the user interface's session |
+| GET | `core/applications/` (the list only) | My applications |
+| GET | `authenticators/all/`, `stages/all/user_settings/`, `sources/all/user_settings/`, `sources/user_connections/all/` | Settings: MFA devices and connections |
+| PUT, DELETE | `authenticators/{static,totp,webauthn}/<id>/` | rename or remove your own device |
+| GET | `core/tokens/` (the list only) | Settings, Tokens (read) |
+| GET, DELETE | `core/authenticated_sessions/` (list), `<uuid>/used_by/`, `<uuid>/` | Settings, Sessions |
+| GET, DELETE | `core/user_consent/` (list), `<id>/used_by/`, `<id>/` | Settings, Consent |
+| GET, POST, PATCH | `events/notifications/`, `mark_all_seen/`, `<uuid>/` | notifications drawer |
+
+Everything else is LAN/Twingate only, notably: creating, editing, viewing
+the key of or deleting API tokens (`core/tokens` POST/PUT, `view_key`), any
+write to `core/applications` or `core/brands`, all of `flows/instances`
+(including `import_flow` and exports), the flow inspector, account switching
+and self-lockdown, and the features this stack does not use (endpoint agents,
+access requests, RAC, Plex, Telegram, OAuth and SAML sources, Duo).
 
 **How the list was derived** (2026.8.3). The image's web bundle,
-`/web/dist`, has one entry per interface (`admin/AdminInterface-*.js`,
-`flow/FlowInterface-*.js`, `user/UserInterface-*.js`, `rac/`, and
-`standalone/api-browser/`). Following each entry's imports gives the code it
+`/web/dist`, has one entry per interface (`flow/FlowInterface-*.js`,
+`user/UserInterface-*.js`, `admin/AdminInterface-*.js`, ...). Following the
+imports of the flow and user entries (never the admin one) gives the code they
 can run; mapping the generated API client methods that code calls (for
-example `coreUsersMeRetrieve`) to their paths (`/core/users/me/`) gives the
-API paths each interface uses. A prefix is restricted only if the admin
-interface is the only one that calls it. The flow interface calls
-`flows/executor`, `flows/inspector`, `root/config`, `admin/version`,
-`admin/system`, `core/brands/current`, `sources/plex/redeem_token` and
-`stages/authenticator/duo/<id>/enrollment_status`; the user interface about
-60 endpoints in `core`, `authenticators`, `sources`, `events/notifications`,
-`requests/grant-requests`, `agents`, `rac/endpoints` and
-`stages/all/user_settings`. `admin/system` is restricted anyway: only the
-admin "About" dialog uses it and Authentik refuses it to non-admins.
-`flows/instances` is called only by the admin interface but stays public as a
-precaution for flow lookups.
+example `coreUsersMeRetrieve`) to their paths and methods (`GET
+/core/users/me/`) gives what they use. The source maps then showed where each
+call is made, which is how unused features and write calls were dropped. The
+regexes are anchored (`^...$`), so a sub-path such as
+`core/applications/<slug>/` is not public just because the list is.
 
-**After every Authentik upgrade**, re-derive the list before changing the
-image tag: newer interfaces may call new endpoints. To repeat the analysis,
-copy the bundle out of the new image
-(`docker create ghcr.io/goauthentik/server:<tag>`, then
-`docker cp <id>:/web/dist <dir>`), list the paths called from the flow and
-user entries, and adjust the `PathRegexp` in `stacks/edge.yaml` and the path
-lists in `scripts/ci/test-edge.sh`. Then check from outside the LAN that the
-login, `/if/user/` and an invitation still work. `authentik-admin-api-lan` in
-`verify-edge.sh` checks the router from the proxy network
-(`/api/v3/policies/all/` must be 403 and `/api/v3/root/config/` must be 200).
+Path tricks do not get past the routers: Traefik cleans the path before
+routing (`//api`, `..` segments) and matches the decoded path (`%70olicies`),
+so these hit `auth-admin-api` and answer 403; `/API/...` is not the API at all
+(Authentik's routing is case-sensitive and answers 404).
+`authentik-admin-api-lan` in `verify-edge.sh` probes this from the proxy
+network: an admin path, an unlisted `/api/v3/newthing/` and the encoded forms
+must be 403, and `/api/v3/root/config/` must be 200.
+
+**After an Authentik upgrade**, new endpoints are LAN-only until you allowlist
+them. If a user-facing feature breaks from outside the LAN (a flow stops, a
+Settings tab shows an error) while it works on the LAN or over Twingate:
+
+1. In the browser's developer tools, Network tab, find the `/api/v3/...`
+   request answered **403** with the plain-text body `Forbidden` (that is
+   Traefik's allowlist; Authentik's own 403s are JSON with a `detail` field).
+2. Confirm the new interface really needs it: copy the bundle out of the new
+   image (`docker create ghcr.io/goauthentik/server:<tag>`, then
+   `docker cp <id>:/web/dist <dir>`, `docker rm <id>`) and check that the
+   flow or user interface, not only the admin one, calls that path.
+3. Add the narrowest path and method to the `auth-public-api` rule in
+   `stacks/edge.yaml` and to `AK_API_PUBLIC` in `scripts/ci/test-edge.sh`,
+   run the CI checks, then `docker compose up -d authentik-server` and
+   `scripts/vm/verify-edge.sh`.
+
+Never widen `auth-admin-api` or add a prefix-wide public rule to fix one call.
 
 ## 7. CrowdSec and geo-block
 
@@ -591,6 +606,27 @@ docker compose logs --tail 30 traefik | grep -iE 'plugin|geoblock|error'
 `crowdsec` must show `(healthy)`. Traefik is recreated because its labels
 and plugin flags changed.
 
+**Traefik waits for CrowdSec.** Traefik's `depends_on` requires a *healthy*
+`crowdsec` (so the bouncer never starts without its ban list). This is
+intended: while CrowdSec is unhealthy or stopped, `docker compose up -d`
+leaves Traefik down (it reports `dependency failed to start: container
+crowdsec is unhealthy` or keeps waiting), and nothing on 443 answers, Seerr
+and the Authentik login included. Plex on 32400 is unaffected. Diagnose it
+with:
+
+```bash
+docker compose ps crowdsec
+docker compose logs --tail 50 crowdsec
+docker compose exec crowdsec cscli lapi status
+```
+
+Typical causes are a failed hub download on the first start (no internet or
+DNS on the VM), a broken `/opt/appdata/crowdsec/config`, or a full disk. Fix
+the cause and run `docker compose up -d`; Traefik starts once CrowdSec is
+healthy. For an emergency without CrowdSec, see Rollback, "Bypass CrowdSec
+temporarily" (also remove the `crowdsec` `depends_on` entry in
+`stacks/edge.yaml` for the duration).
+
 **Bouncer registration.** Nothing to run by hand. `secrets/crowdsec_bouncer_key`
 (created by `40-edge-secrets.sh` in section 2) is mounted into the CrowdSec
 container as `/run/secrets/bouncer_key_traefik-bouncer`, and the image's start
@@ -625,8 +661,20 @@ The rule targets `/opt/appdata/traefik/logs/*.log`. If your `APPDATA_ROOT` is
 different, edit the path in `/etc/logrotate.d/traefik-access`. logrotate
 cannot read `.env`, so the rule hard-codes `su 1000 1000` and
 `create 0640 1000 1000`: if your `PUID`/`PGID` are not 1000, edit both lines
-to your values. Check it with
-`sudo logrotate -d /etc/logrotate.d/traefik-access`.
+to your values. (`create` has no effect while `copytruncate` is set; it is kept
+so the rule stays safe if `copytruncate` is ever removed.) Check the rule with a
+dry run, which changes nothing:
+
+```bash
+sudo logrotate -d /etc/logrotate.d/traefik-access
+```
+
+It must list `/opt/appdata/traefik/logs/access.log` and print no `error:` line.
+If it rejects the numeric ids (for example `error: ... unknown user '1000'` on
+the `su` or `create` line), replace them with the names of the `PUID` user and
+group (`getent passwd 1000` and `getent group 1000` show them; on this VM
+usually `su media media` and `create 0640 media media`), then run the dry run
+again.
 
 **Check.**
 
@@ -710,13 +758,17 @@ scripts/vm/verify-edge.sh --ban-test
 two-minute CrowdSec ban for its address, expects `requests.<domain>` to answer
 403 within 30 seconds, then deletes the ban and the container. Because the
 client's address is private, it passes the geo-block, so the 403 can only come
-from CrowdSec. The expected result is **0 fail** (SKIPs for `cert-wildcard`
-on staging certificates and for `authentik-mfa` without a token are fine).
+from CrowdSec. The expected result is **0 fail**. A SKIP for `authentik-mfa`
+without a token is fine, but for acceptance `cert-wildcard` must **PASS**: a
+`SKIP cert-wildcard` (staging certificate) does not count. Switch to production
+first (section 4).
 
 The checks above cannot see the internet, so the owner confirms these seven
 by hand and pastes the evidence into the Acceptance record:
 
-1. **`verify-edge.sh --ban-test`** ends with `0 fail`.
+1. **`verify-edge.sh --ban-test`** ends with `0 fail` and shows
+   `PASS cert-wildcard` (a production Let's Encrypt certificate; `SKIP
+   cert-wildcard` means it is still staging and the step is not done).
 2. **DDNS recovery.** In Cloudflare, change the `plex` A record to
    `192.0.2.1`. Within five minutes `dig +short plex.<domain> @1.1.1.1` must
    show your WAN IP again (`docker compose logs cloudflare-ddns` shows the
@@ -741,7 +793,7 @@ Filled in from the owner's real run on `media-01`. Nothing here comes from CI.
 | Step | Evidence |
 |------|----------|
 | Date | <!-- owner: paste real output --> |
-| 1. `scripts/vm/verify-edge.sh --ban-test`, full output ending in `RESULT: ... 0 fail` | <!-- owner: paste real output --> |
+| 1. `scripts/vm/verify-edge.sh --ban-test`, full output ending in `RESULT: ... 0 fail`, including `PASS cert-wildcard` (SKIP does not count) | <!-- owner: paste real output --> |
 | 2. DDNS: `plex` A record set to `192.0.2.1`, back to the WAN IP within 5 minutes (`dig` output and time) | <!-- owner: paste real output --> |
 | 3. Port scan of the WAN IP from the hotspot: only 443 and 32400 open | <!-- owner: paste real output --> |
 | 4. `*.int.<domain>` from off-LAN without Twingate returns 403 (`curl --resolve` output) | <!-- owner: paste real output --> |
