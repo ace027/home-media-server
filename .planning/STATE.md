@@ -14,6 +14,7 @@
 - Execution mode: Guided
 - Planning depth: Standard
 - Cost profile: Balanced
+- 2026-10-14: forced-Sonnet subagent rule removed (`.claude/settings.json` deleted, CLAUDE.md line dropped); agents use Triad tiers (Opus orchestrator and open-ended coder, Sonnet coder, Haiku helper)
 - 2026-10-14: moved from Legion to the Triad plugin (`/legion:*` → `/triad:*`); `/triad validate` failures fixed (`user_setup` items in 01-04 and 02-04 are now `{task: ...}` objects)
 - Design source: `.planning/explorations/2026-09-23-home-media-server-design.md`
 - Codebase map: skipped (greenfield, no source code)
@@ -30,7 +31,7 @@
 - Phase 2 spec: `.planning/specs/02-core-media-automation-spec.md` (spec critique REWORK → revised; plan critique: 30 findings, fixes folded into spec rows 21–29 and the plans)
 - Phase 2 review: PASSED after 3 cycles, escalation and a targeted re-review (3 blockers, 15 warnings fixed) — `.planning/phases/02-core-media-automation/02-REVIEW.md`
 - 2026-09-29: Phase 2 owner acceptance passed on media-01: `verify-media.sh` `RESULT: 14 pass, 0 fail, 1 skip`, `--watch-import` PASS for radarr, radarr-4k and sonarr-anime. Real-run fixes merged before acceptance: remap refuses only titles with files, every container gets explicit DNS servers (the VM's `resolv.conf` had two dead entries), and `no-regrab` counts REPACK/PROPER grabs as upgrades (PRs #7, #8).
-- 2026-09-29: all subagents run on the latest Sonnet (`.claude/settings.json`, CLAUDE.md)
+- 2026-09-29: all subagents run on the latest Sonnet (superseded 2026-10-14: Triad model tiers)
 - Owner checkpoint: `scripts/vm/verify.sh` on the real VM → `RESULT: 10 pass, 0 fail, 0 skip` (2026-09-28), recorded in runbook 02's Acceptance record
 
 ## GitHub
