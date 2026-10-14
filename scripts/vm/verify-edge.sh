@@ -12,15 +12,15 @@ LAN_CIDR="${LAN_CIDR:-}"
 SKIP_NET="${SKIP_NET:-0}"
 AUTHENTIK_TOKEN="${AUTHENTIK_TOKEN:-}"
 
-# Throwaway client for int-lan-only, authentik-admin-lan and int-forward-auth
-# (runs on the proxy network, outside LAN_CIDR).
+# Throwaway client for int-lan-only, authentik-admin-lan, authentik-admin-api-lan and
+# int-forward-auth (runs on the proxy network, outside LAN_CIDR).
 CURL_IMAGE="curlimages/curl:8.22.0"
 # The only ports that may be published on every interface.
 OPEN_PORTS=(443 32400)
 CHECKS=(edge-healthy edge-ports no-docker-sock int-chains cert-wildcard
         ddns-records int-lan-only public-routes secure-headers
-        authentik-healthy auth-public authentik-admin-lan int-forward-auth authentik-mfa
-        crowdsec-healthy crowdsec-bouncer crowdsec-acquis public-chain no-lan-override
+        authentik-healthy auth-public authentik-admin-lan authentik-admin-api-lan
+        int-forward-auth authentik-mfa crowdsec-healthy crowdsec-bouncer crowdsec-acquis public-chain no-lan-override
         crowdsec-ban)
 BAN_TEST=0
 
@@ -31,7 +31,8 @@ usage() {
 Phase 3 acceptance gate for the edge (Traefik, socket proxy, DDNS, Authentik).
 Read-only: it inspects containers and makes HTTPS and API GET requests; the only
 thing it starts is a throwaway curl container on the proxy network
-(int-lan-only, authentik-admin-lan, int-forward-auth), removed on exit.
+(int-lan-only, authentik-admin-lan, authentik-admin-api-lan, int-forward-auth),
+removed on exit.
 
 Runs ${#CHECKS[@]} checks, in order, each printing one line:
   PASS <id> <detail>
@@ -44,6 +45,8 @@ cert-wildcard: a production Let's Encrypt wildcard, SKIP on staging;
 authentik-healthy: authentik-server and authentik-db healthy, authentik-worker running;
 auth-public: https://auth.<domain>/-/health/live/ answers 200 or 204;
 authentik-admin-lan: from outside LAN_CIDR /if/admin/ is 403 and /-/health/live/ is not;
+authentik-admin-api-lan: from outside LAN_CIDR the admin-only API /api/v3/policies/all/
+is 403 and the public /api/v3/root/config/ is 200;
 int-forward-auth: the outpost answers an unauthenticated sonarr.int request with a
 302 to https://auth.<domain>/;
 authentik-mfa: via /api/v3/, admins-only-mfa is bound to the MFA validation stage
@@ -52,7 +55,8 @@ crowdsec-healthy: crowdsec running and healthy;
 crowdsec-bouncer: the traefik-bouncer pulled decisions within the last 2 minutes;
 crowdsec-acquis: CrowdSec has read lines from Traefik's access log;
 public-chain: the public chain is crowdsec, geoblock, rate-limit, secure-headers, and only
-seerr, auth and jellyfin routers use it;
+seerr, auth and jellyfin routers use it; public-auth is crowdsec, geoblock,
+auth-rate-limit, secure-headers and the auth router uses it;
 no-lan-override: compose.lan.yaml is gone and no container publishes a port but 443 and 32400;
 crowdsec-ban: only with --ban-test: bans a throwaway client for 2 minutes and expects a
 403 from requests.<domain>, then lifts the ban; otherwise SKIP.)
@@ -377,6 +381,24 @@ check_authentik_admin_lan() {
   fi
 }
 
+check_authentik_admin_api_lan() {
+  local id=authentik-admin-api-lan ip admin pub
+  net_skip "$id" && return 0
+  ip="$(traefik_ip)"
+  [[ -n "$ip" ]] || { fail "$id" "traefik has no address on the proxy network"; return 0; }
+  # Same vantage point as authentik-admin-lan. The auth-admin-api router answers 403
+  # before Authentik sees the request, so no session or token is needed.
+  admin="$(proxy_curl -sk --max-time 15 -o /dev/null -w '%{http_code}' \
+    --resolve "auth.$DOMAIN:443:$ip" "https://auth.$DOMAIN/api/v3/policies/all/")" || admin=""
+  pub="$(proxy_curl -sk --max-time 15 -o /dev/null -w '%{http_code}' \
+    --resolve "auth.$DOMAIN:443:$ip" "https://auth.$DOMAIN/api/v3/root/config/")" || pub=""
+  if [[ "$admin" == 403 && "$pub" == 200 ]]; then
+    pass "$id" "from outside $LAN_CIDR: /api/v3/policies/all/ -> 403, /api/v3/root/config/ -> 200"
+  else
+    fail "$id" "from outside $LAN_CIDR: /api/v3/policies/all/ -> ${admin:-no response} (want 403), /api/v3/root/config/ -> ${pub:-no response} (want 200)"
+  fi
+}
+
 check_int_forward_auth() {
   local id=int-forward-auth out code loc
   net_skip "$id" && return 0
@@ -469,15 +491,20 @@ check_crowdsec_acquis() {
 }
 
 check_public_chain() {
-  local id=public-chain cid labels chain bad ids=()
+  local id=public-chain cid labels chain bad ids=() auth_chain auth_mw
   net_skip "$id" && return 0
   cid="$(traefik_id)"
   [[ -n "$cid" ]] || { fail "$id" "traefik container not found"; return 0; }
   labels="$(docker inspect "$cid" | jq -r '.[0].Config.Labels["traefik.http.middlewares.public.chain.middlewares"] // ""')"
   chain="crowdsec,geoblock,rate-limit,secure-headers"
   [[ "$labels" == "$chain" ]] || { fail "$id" "public chain is '${labels:-unset}', want $chain"; return 0; }
+  labels="$(docker inspect "$cid" | jq -r '.[0].Config.Labels["traefik.http.middlewares.public-auth.chain.middlewares"] // ""')"
+  auth_chain="crowdsec,geoblock,auth-rate-limit,secure-headers"
+  [[ "$labels" == "$auth_chain" ]] || { fail "$id" "public-auth chain is '${labels:-unset}', want $auth_chain"; return 0; }
   mapfile -t ids < <(docker ps -q)
   docker inspect "${ids[@]}" >"$W/inspect.json"
+  auth_mw="$(jq -r '[.[] | .Config.Labels["traefik.http.routers.auth.middlewares"] // empty][0] // ""' "$W/inspect.json")"
+  [[ "$auth_mw" == "public-auth@docker" ]] || { fail "$id" "auth router middlewares is '${auth_mw:-unset}', want public-auth@docker"; return 0; }
   # Routers whose middlewares include public@docker, other than the expected ones.
   bad="$(jq -r '.[] | (.Config.Labels // {}) as $l | $l | keys[]
     | select(test("^traefik\\.http\\.routers\\.[^.]+\\.middlewares$") and ($l[.] | split(",") | any(. == "public@docker")))
@@ -486,7 +513,7 @@ check_public_chain() {
   if [[ -n "$bad" ]]; then
     fail "$id" "unexpected routers on public@docker: $bad"
   else
-    pass "$id" "public = $chain; only seerr, auth and jellyfin routers use it"
+    pass "$id" "public = $chain (seerr, jellyfin); public-auth = $auth_chain (auth)"
   fi
 }
 

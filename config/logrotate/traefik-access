@@ -2,9 +2,18 @@
 #   sudo install -m 0644 config/logrotate/traefik-access /etc/logrotate.d/traefik-access
 # Edit the path if APPDATA_ROOT is not /opt/appdata. copytruncate keeps Traefik and
 # CrowdSec writing/reading the same open file.
+# The log holds client IPs and full request URLs (including one-time recovery and
+# invitation tokens), so only two weeks are kept. The logs directory is 0750 (mkdirs.sh),
+# which is what keeps other users out; `create` only takes effect if copytruncate is
+# ever dropped (copytruncate leaves the original file in place).
+# logrotate cannot read .env: 1000 1000 below is PUID PGID (Traefik writes the log as
+# PUID). Edit both lines if your PUID/PGID differ. `su` makes logrotate work as that
+# user in the PUID-owned logs directory instead of as root.
 /opt/appdata/traefik/logs/*.log {
+    su 1000 1000
+    create 0640 1000 1000
     weekly
-    rotate 4
+    rotate 2
     compress
     copytruncate
     missingok

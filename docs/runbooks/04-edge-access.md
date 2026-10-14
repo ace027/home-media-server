@@ -28,18 +28,62 @@ closed: certificates come from DNS-01, so no HTTP challenge is needed.
 - `.env` holds your real `DOMAIN`, and the VM user is in the `docker` group.
 - `dig` is installed for the DDNS check: `sudo apt install dnsutils`.
 
-## 1. Cloudflare token and DNS records
+## 1. Cloudflare tokens and DNS records
 
-**Token.** In the Cloudflare dashboard open My Profile, API Tokens, Create
-Token, "Edit zone DNS" template. Set the permission to **Zone, DNS, Edit**
-and Zone Resources to **Include, Specific zone, your domain** (this zone
-only; never a global key or an all-zones token). Copy it once; Cloudflare
-does not show it again. Step 2 stores it in `secrets/cf_dns_api_token`.
+**Two tokens.** Traefik (certificates) and cloudflare-ddns (A records) each get
+their own token, so either can be rotated or revoked without touching the
+other:
 
-To rotate it, create a new token the same way, overwrite the file (step 2),
-run `docker compose up -d --force-recreate traefik cloudflare-ddns`, check
-`scripts/vm/verify-edge.sh`, then delete the old token in Cloudflare. Rotate
-it at least yearly and whenever someone who saw it leaves.
+| Token name in Cloudflare | Secret file | Used by |
+|---|---|---|
+| `media-01 traefik acme` | `secrets/cf_dns_api_token` | Traefik, ACME DNS-01 challenge |
+| `media-01 ddns` | `secrets/cf_ddns_api_token` | cloudflare-ddns |
+
+Create each one the same way: in the Cloudflare dashboard open My Profile,
+API Tokens, Create Token, Create Custom Token, and set
+
+- Permissions: **Zone, Zone, Read** and **Zone, DNS, Edit** (both are needed:
+  the clients look the zone up by name before they edit records);
+- Zone Resources: **Include, Specific zone, your domain** (this zone only;
+  never a global key or an all-zones token);
+- Client IP Address Filtering: **leave it empty**. The WAN IP is dynamic, so
+  a filter would lock DDNS out the moment the IP changes.
+
+Copy each token once; Cloudflare does not show it again. Step 2 stores them.
+
+**Rotation.** Rotate each token at least yearly and whenever someone who saw
+it leaves, one at a time: create the new token as above, write it with the
+same command as in step 2 (it replaces the old file), recreate its consumer
+(`docker compose up -d --force-recreate traefik` for `cf_dns_api_token`,
+`docker compose up -d --force-recreate cloudflare-ddns` for
+`cf_ddns_api_token`), check `scripts/vm/verify-edge.sh`, then delete the old
+token in Cloudflare.
+
+**CAA record.** Limit certificate issuance for the domain to Let's Encrypt
+using DNS-01 only. In Cloudflare, DNS, Records, Add record: type **CAA**, name
+`@` (the domain itself), flags `0`, tag `issue` ("Only allow specific
+hostnames"), value `letsencrypt.org; validationmethods=dns-01`. With no
+`issuewild` record, this one also governs the wildcard certificates. Check it:
+
+```bash
+dig +short CAA <domain> @1.1.1.1
+```
+
+It must print exactly `0 issue "letsencrypt.org; validationmethods=dns-01"`.
+
+After the first **production** certificate (section 4), pin the record to
+your ACME account as well. Read the account URI from Traefik's store:
+
+```bash
+sudo jq -r '.cloudflare.Account.Registration.uri' /opt/appdata/traefik/acme/acme.json
+```
+
+and edit the record's value to
+`letsencrypt.org; validationmethods=dns-01; accounturi=<that URI>`. Do this
+only after the production switch: the staging account has a different URI.
+Deleting `acme.json` later creates a new account, so remove `accounturi=`
+before you delete it and add the new URI once the new certificate is issued,
+or issuance fails.
 
 **DNS records** (all **DNS only**, grey cloud, never proxied):
 
@@ -58,7 +102,7 @@ Twingate can reach them.
 ## 2. Edge secrets
 
 Create the secret files Compose mounts. The script generates the four it
-can and tells you which one you must supply:
+can and tells you which two you must supply:
 
 ```bash
 scripts/vm/40-edge-secrets.sh
@@ -71,21 +115,33 @@ DRY-RUN: create authentik_secret_key
 DRY-RUN: create authentik_pg_password
 DRY-RUN: create authentik_bootstrap_password
 DRY-RUN: create crowdsec_bouncer_key
-MISSING cf_dns_api_token: paste a Cloudflare API token (Zone:DNS:Edit, this zone only) into <repo>/secrets/cf_dns_api_token
+MISSING cf_dns_api_token: paste a Cloudflare API token (Zone:Zone:Read and Zone:DNS:Edit, this zone only; Traefik ACME DNS-01) into <repo>/secrets/cf_dns_api_token
+MISSING cf_ddns_api_token: paste a Cloudflare API token (Zone:Zone:Read and Zone:DNS:Edit, this zone only; cloudflare-ddns) into <repo>/secrets/cf_ddns_api_token
 ```
 
-Apply it, then paste the token (this keeps it out of your shell history):
+Apply it, then paste the two tokens. `read -s` keeps them out of your shell
+history and off the screen, and `install` writes each file at mode 0400 with
+no moment where it is readable by anyone else (the same commands replace an
+existing file when you rotate a token):
 
 ```bash
 scripts/vm/40-edge-secrets.sh --apply
-read -rs -p 'Cloudflare token: ' t && printf '%s' "$t" > secrets/cf_dns_api_token; unset t
-chmod 0400 secrets/cf_dns_api_token
+read -rs -p 'Cloudflare token for Traefik (ACME): ' t && echo &&
+  (umask 077 && printf '%s' "$t" | install -m 0400 /dev/stdin secrets/cf_dns_api_token); unset t
+read -rs -p 'Cloudflare token for cloudflare-ddns: ' t && echo &&
+  (umask 077 && printf '%s' "$t" | install -m 0400 /dev/stdin secrets/cf_ddns_api_token); unset t
 ls -l secrets/
 ```
 
 The files must be owned by `media` with mode `-r--------`. The script never
 overwrites an existing file and never prints a value, so it is safe to
-re-run. Nothing under `secrets/` is committed.
+re-run. Each generated file is written to a temporary file in `secrets/`
+first and renamed into place, so an interrupted run never leaves a partial
+secret. If a run prints `INVALID <name> (...)`, that file is a symlink, not a
+regular file, or too short (a generated secret under 48 bytes, or an empty
+token): the script leaves it alone and exits 1. Delete that file and re-run
+`--apply` (for a token, write it again). Nothing under `secrets/` is
+committed.
 
 ## 3. Router port forwards
 
@@ -111,13 +167,17 @@ ACME_CASERVER=https://acme-staging-v02.api.letsencrypt.org/directory
 
 `LAN_CIDR` must contain the VM, your LAN clients **and the Twingate
 connector in LXC 101**, or the `*.int` routes answer 403 to Twingate users.
-Keep `ACME_CASERVER` on **staging** for the first start: staging has
-generous rate limits, so a typo costs nothing.
+`.env.example` ships `ACME_CASERVER` on **staging**, and it stays there for
+the first start: staging has generous rate limits, so a typo costs nothing.
+If your `.env` predates this and has the production URL, set it to staging
+now.
 
-Create the directories and start the edge:
+Create the directories, install the Traefik plugins (section 7 explains them;
+Traefik does not start without them) and start the edge:
 
 ```bash
 scripts/mkdirs.sh
+scripts/vm/45-traefik-plugins.sh --apply
 docker compose up -d
 docker compose ps traefik socket-proxy cloudflare-ddns
 scripts/vm/verify-edge.sh
@@ -142,7 +202,8 @@ docker compose up -d traefik
 ```
 
 Deleting `acme.json` is required: Traefik would otherwise keep serving the
-staging certificate. After a minute `scripts/vm/verify-edge.sh` should pass
+staging certificate. Once the production certificate is served, add
+`accounturi=` to the CAA records (section 1). After a minute `scripts/vm/verify-edge.sh` should pass
 every check. The dashboard is at `https://traefik.int.<domain>/` from the
 LAN or Twingate.
 
@@ -167,6 +228,7 @@ SKIP secure-headers SKIP_NET=1
 SKIP authentik-healthy SKIP_NET=1
 SKIP auth-public SKIP_NET=1
 SKIP authentik-admin-lan SKIP_NET=1
+SKIP authentik-admin-api-lan SKIP_NET=1
 SKIP int-forward-auth SKIP_NET=1
 SKIP authentik-mfa SKIP_NET=1
 SKIP crowdsec-healthy SKIP_NET=1
@@ -175,10 +237,11 @@ SKIP crowdsec-acquis SKIP_NET=1
 SKIP public-chain SKIP_NET=1
 SKIP no-lan-override SKIP_NET=1
 SKIP crowdsec-ban run with --ban-test
-RESULT: 0 pass, 0 fail, 20 skip
+RESULT: 0 pass, 0 fail, 21 skip
 ```
 
-The `authentik-*`, `auth-public` and `int-forward-auth` checks belong to
+The `authentik-*` (including `authentik-admin-api-lan`), `auth-public` and
+`int-forward-auth` checks belong to
 section 6 and the `crowdsec-*`, `public-chain` and `no-lan-override` checks
 to sections 7 and 8; until those are set up they may FAIL here.
 `crowdsec-ban` runs only with `--ban-test` (section 9).
@@ -223,10 +286,13 @@ puts them back.
 | `20-forward-auth.yaml` | Proxy provider `int-forward-auth` (forward auth, domain level, cookie on `<domain>`), application `admin-uis` bound to `admins` only, embedded outpost serving it at `https://auth.<domain>` |
 | `30-invitation-enrollment.yaml` | Flow `invitation-enrollment`: sign-up works only with a valid invitation |
 
-`auth.<domain>` itself is public (login pages, rate-limited by
-`public@docker`), but its admin interface, `/if/admin/`, answers only the LAN
-and Twingate (`lan-admin@docker`, router priority 100). Redis is not used:
-since 2025.10 Authentik keeps its cache and task queue in Postgres.
+`auth.<domain>` itself is public (login pages, behind `public-auth@docker`:
+CrowdSec, geo-block, a login rate limit of 5 requests per second per client
+address with bursts of 20, and the secure headers), but its admin interface,
+`/if/admin/`, and the admin-only part of its API answer only the LAN and
+Twingate (`lan-admin@docker`; routers `auth-admin`, priority 100, and
+`auth-admin-api`, priority 110, see 6.8). Redis is not used: since 2025.10
+Authentik keeps its cache and task queue in Postgres.
 
 ### 6.1 First start and bootstrap login
 
@@ -324,8 +390,8 @@ at once.
 scripts/vm/verify-edge.sh
 ```
 
-`authentik-healthy`, `auth-public`, `authentik-admin-lan` and
-`int-forward-auth` must PASS. `authentik-mfa` needs an API token and SKIPs
+`authentik-healthy`, `auth-public`, `authentik-admin-lan`,
+`authentik-admin-api-lan` and `int-forward-auth` must PASS. `authentik-mfa` needs an API token and SKIPs
 without one. To run it, create a token (Directory, Tokens and App passwords,
 Create: intent API, user your admin account, expiring), copy it, then:
 
@@ -354,6 +420,14 @@ Without a valid `itoken` the flow stops at its first stage. Invited users are
 created as `external` under `users/invited`, with no group: they are not in
 `admins` and cannot open any `*.int` route.
 
+Their password must have at least 12 characters, reach a zxcvbn strength
+score of 3 or 4 out of 4 (`zxcvbn_score_threshold: 2` fails every score of 2
+or less; a passphrase of a few random words passes), and not appear in the Have I Been Pwned breach corpus. The breach check uses
+k-anonymity: only the first five characters of the password's SHA-1 hash are
+sent, never the password. It needs outbound HTTPS from `authentik-server` to
+`api.pwnedpasswords.com`; if that is blocked, enrollment fails with a policy
+error.
+
 ### 6.7 Why Seerr stays on Plex login
 
 `requests.<domain>` (Seerr) is not behind forward-auth, by the owner's
@@ -367,11 +441,76 @@ cookie from requests; the cookie alone is still useless from outside the LAN
 and Twingate, because every `*.int` route also needs the `lan-only`
 allowlist. Do not put Seerr behind forward-auth without revisiting this.
 
+### 6.8 Admin API from the LAN only
+
+A stolen admin session cookie or API token must not be usable from the
+internet. `/if/admin/` alone is not enough, because the admin interface is
+just a client of `/api/v3/`. The `auth-admin-api` router (in
+`stacks/edge.yaml`, on `authentik-server`) therefore sends every admin-only
+API prefix through `lan-admin@docker`, so these answer 403 from outside
+`LAN_CIDR` before Authentik sees the request:
+
+- whole groups: `crypto`, `endpoints`, `lifecycle`, `managed` (blueprints),
+  `oauth2`, `outposts`, `policies`, `propertymappings`, `providers`, `rbac`,
+  `reports`, `ssf`, `tasks`;
+- inside shared groups: `admin/{apps,file,models,settings,system}`,
+  `authenticators/admin`, `core/{groups,object_attributes,transactional}`,
+  the user list `core/users/` and `core/users/{export,paths,service_account,<id>}`
+  (set password, recovery links, impersonation), `events/{events,rules,transports}`,
+  `flows/bindings`, `rac/connection_tokens`,
+  `requests/{rules,rule-bindings,rule-child-bindings}`,
+  `sources/{group_connections,kerberos,ldap,oauth,saml,scim,scim_groups,scim_users}`,
+  and every `stages/...` admin endpoint except `stages/all` and
+  `stages/authenticator/duo`.
+
+Everything else stays public, because the login, enrollment, recovery and
+invitation flows, the user interface (`/if/user/`) and the forward-auth
+outpost (`/outpost.goauthentik.io/`, not under `/api/v3/`) use it:
+`flows/executor`, `flows/inspector`, `flows/instances`, `root/config`,
+`admin/version`, `core/users/me`, `core/users/switch`, `core/applications`,
+`core/tokens` (your own tokens), `core/brands/current`,
+`core/authenticated_sessions`, `core/user_consent`, `authenticators/<type>/`
+(your own devices), `stages/all/user_settings`, `sources/all`, `sources/plex`,
+`sources/user_connections`, `events/notifications`, `rac/endpoints` and
+`requests/grant-requests`.
+
+**How the list was derived** (2026.8.3). The image's web bundle,
+`/web/dist`, has one entry per interface (`admin/AdminInterface-*.js`,
+`flow/FlowInterface-*.js`, `user/UserInterface-*.js`, `rac/`, and
+`standalone/api-browser/`). Following each entry's imports gives the code it
+can run; mapping the generated API client methods that code calls (for
+example `coreUsersMeRetrieve`) to their paths (`/core/users/me/`) gives the
+API paths each interface uses. A prefix is restricted only if the admin
+interface is the only one that calls it. The flow interface calls
+`flows/executor`, `flows/inspector`, `root/config`, `admin/version`,
+`admin/system`, `core/brands/current`, `sources/plex/redeem_token` and
+`stages/authenticator/duo/<id>/enrollment_status`; the user interface about
+60 endpoints in `core`, `authenticators`, `sources`, `events/notifications`,
+`requests/grant-requests`, `agents`, `rac/endpoints` and
+`stages/all/user_settings`. `admin/system` is restricted anyway: only the
+admin "About" dialog uses it and Authentik refuses it to non-admins.
+`flows/instances` is called only by the admin interface but stays public as a
+precaution for flow lookups.
+
+**After every Authentik upgrade**, re-derive the list before changing the
+image tag: newer interfaces may call new endpoints. To repeat the analysis,
+copy the bundle out of the new image
+(`docker create ghcr.io/goauthentik/server:<tag>`, then
+`docker cp <id>:/web/dist <dir>`), list the paths called from the flow and
+user entries, and adjust the `PathRegexp` in `stacks/edge.yaml` and the path
+lists in `scripts/ci/test-edge.sh`. Then check from outside the LAN that the
+login, `/if/user/` and an invitation still work. `authentik-admin-api-lan` in
+`verify-edge.sh` checks the router from the proxy network
+(`/api/v3/policies/all/` must be 403 and `/api/v3/root/config/` must be 200).
+
 ## 7. CrowdSec and geo-block
 
-Every route on the `public` chain (Seerr, and `auth.<domain>` apart from
-`/if/admin`) now passes four middlewares in this order: `crowdsec`,
-`geoblock`, `rate-limit`, `secure-headers`.
+Every internet-facing route now passes four middlewares in this order:
+`crowdsec`, `geoblock`, a rate limit, `secure-headers`. Seerr uses the
+`public` chain (`rate-limit`: 20 requests per second, bursts of 50) and
+`auth.<domain>`, apart from its LAN-only admin paths, uses `public-auth`
+(`auth-rate-limit`: 5 requests per second per client address, bursts of 20,
+to slow down password guessing).
 
 - **CrowdSec** (`crowdsecurity/crowdsec:v1.8.1`) reads Traefik's JSON access
   log and bans abusive clients. Traefik's bouncer plugin (v1.7.1) pulls the
@@ -382,6 +521,52 @@ Every route on the `public` chain (Seerr, and `auth.<domain>` apart from
   `GEO_ALLOWED_COUNTRIES`. Private addresses (the LAN, Docker networks)
   always pass.
 
+**Traefik plugins.** Both plugins are Go source that runs inside Traefik, so
+they are pinned to a commit, not just a tag, and never downloaded by Traefik.
+`config/traefik/plugins.lock` lists each one as
+`<name> <module> <tag> <commit>`, and `scripts/vm/45-traefik-plugins.sh`
+clones each module at its tag, refuses it unless the checkout is exactly the
+locked commit, and installs the tree (without `.git`) under
+`/opt/appdata/traefik/plugins-local/src/<module>`. Traefik mounts that
+directory read-only and loads the plugins from it
+(`--experimental.localPlugins.*`), so a start needs no internet access and
+nothing upstream can change the code under you. Preview it:
+
+```bash
+scripts/vm/45-traefik-plugins.sh
+```
+
+Expected output:
+
+```text
+DRY-RUN: install crowdsec github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin@v1.7.1 (bef5dfaadbb07381af02ec4e7391e49214ebf953) -> /opt/appdata/traefik/plugins-local/src/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+DRY-RUN: install geoblock github.com/PascalMinder/geoblock@v0.3.8 (d3a04598e3068361b2f3fdde90d14d9fea8312dd) -> /opt/appdata/traefik/plugins-local/src/github.com/PascalMinder/geoblock
+```
+
+Then run it with `--apply` **before Traefik starts** (section 4 already did;
+it is idempotent and prints `KEEP <name> <tag> (installed)` for a plugin
+that is already in place). It needs `git` and HTTPS access to github.com,
+and no root.
+
+**Upgrading a plugin.** Never edit the installed tree.
+
+1. Pick the new release tag and resolve its commit:
+   `git ls-remote https://github.com/PascalMinder/geoblock 'refs/tags/v0.3.9*'`
+   (for an annotated tag use the `^{}` line, which is the commit).
+2. Review the change before you trust it: clone the module and read
+   `git diff <old tag> <new tag>` (the plugin runs inside Traefik and can
+   read every file Traefik can, including the Cloudflare token and the
+   bouncer key).
+3. Update the tag and the commit on its line in `config/traefik/plugins.lock`
+   (and the version mentioned in the `stacks/edge.yaml` comment), commit it,
+   and pull it on the VM.
+4. Install and restart: `scripts/vm/45-traefik-plugins.sh --apply`, then
+   `docker compose up -d --force-recreate traefik` and `scripts/vm/verify-edge.sh`.
+
+If the tag now points at a different commit than the lock says (a moved or
+re-pushed tag), the script stops with `refusing to install` and leaves the
+installed copy alone; find out why before you change the lock.
+
 **Allowed countries.** Set the ISO 3166 codes of every country you or your
 family log in from, comma-separated, in `.env`:
 
@@ -390,11 +575,13 @@ GEO_ALLOWED_COUNTRIES=US,CA
 ```
 
 **Start CrowdSec and apply the chain.** The first start downloads three hub
-collections (`crowdsecurity/traefik`, `http-cve`, `base-http-scenarios`) and
-the two Traefik plugins, so the VM needs internet access:
+collections (`crowdsecurity/traefik`, `http-cve`, `base-http-scenarios`), so
+the VM needs internet access. Traefik waits for CrowdSec to be healthy before it
+starts:
 
 ```bash
 scripts/mkdirs.sh
+scripts/vm/45-traefik-plugins.sh --apply
 docker compose up -d crowdsec
 docker compose ps crowdsec
 docker compose up -d traefik
@@ -422,15 +609,23 @@ cannot reach CrowdSec it fails open (traffic keeps flowing without bans);
 two minutes.
 
 **Log rotation.** Traefik does not rotate its access log, and CrowdSec reads
-it. Install the logrotate rule (weekly, four rotations, compressed,
-`copytruncate` so both programs keep their open file):
+it. The log holds client addresses and full request URLs, including one-time
+recovery and invitation tokens, so only two weeks are kept and the logs
+directory is `0750` (owned by `PUID`, no access for other users;
+`scripts/mkdirs.sh` sets it; CrowdSec runs as root in its container and can
+still read it). Install the logrotate rule (weekly, two rotations,
+compressed, `copytruncate` so both programs keep their open file, run as
+`PUID:PGID` through `su`):
 
 ```bash
 sudo install -m 0644 config/logrotate/traefik-access /etc/logrotate.d/traefik-access
 ```
 
 The rule targets `/opt/appdata/traefik/logs/*.log`. If your `APPDATA_ROOT` is
-different, edit the path in `/etc/logrotate.d/traefik-access`. Check it with
+different, edit the path in `/etc/logrotate.d/traefik-access`. logrotate
+cannot read `.env`, so the rule hard-codes `su 1000 1000` and
+`create 0640 1000 1000`: if your `PUID`/`PGID` are not 1000, edit both lines
+to your values. Check it with
 `sudo logrotate -d /etc/logrotate.d/traefik-access`.
 
 **Check.**
@@ -594,8 +789,9 @@ stay on.
 
 **Bypass CrowdSec temporarily.** To unban one address:
 `docker compose exec crowdsec cscli decisions delete --ip <address>`. To take
-CrowdSec out of the chain, change the `public` chain label in
-`stacks/edge.yaml` to `geoblock,rate-limit,secure-headers`, run
+CrowdSec out of the chains, change the `public` chain label in
+`stacks/edge.yaml` to `geoblock,rate-limit,secure-headers` and the
+`public-auth` chain label to `geoblock,auth-rate-limit,secure-headers`, run
 `docker compose up -d traefik`, and revert it afterwards. Also add your own
 network to `LAN_CIDR` if you keep banning yourself.
 
@@ -637,9 +833,14 @@ trusted.** A staging certificate is not trusted by browsers; that is expected
 until you switch `ACME_CASERVER` to production and delete
 `/opt/appdata/traefik/acme/acme.json` (section 4). If Traefik never obtains a
 certificate, `docker compose logs traefik | grep -i acme` names the error.
-`Invalid token` or `403` from Cloudflare means the token lacks **Zone, DNS,
-Edit** on this zone, or it was pasted with a trailing newline or quotes
-(section 1 and 2). Let's Encrypt production limits failed validations (5 per
+`Invalid token` or `403` from Cloudflare means `secrets/cf_dns_api_token`
+lacks **Zone, Zone, Read** or **Zone, DNS, Edit** on this zone, or it was
+pasted with a trailing newline or quotes (sections 1 and 2); cloudflare-ddns
+errors point at `secrets/cf_ddns_api_token` the same way
+(`docker compose logs cloudflare-ddns`). A `CAA` error from Let's Encrypt
+means the CAA record's `accounturi=` names another account (after a deleted
+`acme.json`) or the record lacks `validationmethods=dns-01` spelled exactly;
+fix the record (section 1). Let's Encrypt production limits failed validations (5 per
 hour per name), so debug on staging.
 
 **`*.int` answers 403 over Twingate.** Traefik sees the connector's address,
@@ -659,19 +860,37 @@ error means your country is not in `GEO_ALLOWED_COUNTRIES` (section 7). For
 CrowdSec: `docker compose exec crowdsec cscli decisions list`, then
 `cscli decisions delete --ip <address>`.
 
-**Traefik does not start, or logs `plugin: failed to download`/`unable to
-download plugin`.** Traefik downloads both plugins from GitHub at start and
-keeps them in `/opt/appdata/traefik/plugins-storage`. Check the VM's internet
-and DNS access, and that the directory is writable by `PUID`
-(`scripts/mkdirs.sh`). The versions are pinned in `stacks/edge.yaml`
-(`--experimental.plugins.*.version`); a typo makes the download fail. Once
-downloaded, the plugins are reused, so later starts work offline.
+**Traefik does not start, or logs a plugin error** (for example
+`unable to load plugin` or a missing `/plugins-local/src/...` path). Traefik
+loads both plugins from `/opt/appdata/traefik/plugins-local` and never
+downloads them. Run `scripts/vm/45-traefik-plugins.sh`: a `DRY-RUN: install`
+line means a plugin is missing or does not match `config/traefik/plugins.lock`;
+run it with `--apply` (needs internet access to github.com), then
+`docker compose up -d traefik`. If `--apply` stops with `refusing to install`,
+the tag upstream no longer points at the locked commit: do not edit the lock
+to make it pass; review the change first (section 7, Upgrading a plugin).
 
 **`crowdsec-bouncer` FAILs: never pulled, or the last pull is old.** Traefik
 cannot reach `crowdsec:8080` or the key differs. `docker compose logs crowdsec
 | grep -i bouncer` and `docker compose logs traefik | grep -i crowdsec`. Both
 containers must be on the `crowdsec` network; recreate them with
 `docker compose up -d --force-recreate crowdsec traefik`.
+
+**Login answers 429 Too Many Requests.** `auth-rate-limit` allows 5
+requests per second per client address (bursts of 20). A normal login stays
+well below it; repeated 429s from one address are a script or a stuck page.
+LAN clients are limited the same way, except on the admin paths
+(`/if/admin/` and the admin API, section 6.8), whose routers carry no rate
+limit.
+
+**Brute force against the Authentik login.** CrowdSec sees Authentik only
+through Traefik's access log, where a failed login looks like any other flow
+request, so `auth-rate-limit`, CrowdSec's generic HTTP scenarios and admin
+MFA are the brakes. No Authentik collection is enabled: the hub's only one
+(the community-made `firix/authentik`) parses Authentik's own logs, which
+CrowdSec does not read here, and giving CrowdSec Docker API access to read
+them is deliberately not done. Check the enabled collections with
+`docker compose exec crowdsec cscli collections list`.
 
 **A blueprint shows error.** `docker compose logs authentik-worker | grep -i
 blueprint` names the failing entry. Fix the file in

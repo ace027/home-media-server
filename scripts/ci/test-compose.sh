@@ -30,10 +30,10 @@ ok "config default"
 docker compose -f compose.yaml --profile jellyfin config -q || fail "config --profile jellyfin"
 ok "config jellyfin profile"
 
-if docker compose -f compose.yaml config --services | grep -qx jellyfin; then
+if grep -qx jellyfin <<<"$(docker compose -f compose.yaml config --services)"; then
   fail "jellyfin present without its profile"
 fi
-docker compose -f compose.yaml --profile jellyfin config --services | grep -qx jellyfin \
+grep -qx jellyfin <<<"$(docker compose -f compose.yaml --profile jellyfin config --services)" \
   || fail "jellyfin missing with --profile jellyfin"
 ok "jellyfin profile only"
 

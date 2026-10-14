@@ -42,9 +42,13 @@ services:
       file: _common.yaml
       service: base
     image: traefik:v3.7.14
+    # Long syntax: Traefik waits for a healthy CrowdSec LAPI, so the bouncer's first
+    # stream pull does not fail (it fails open) on a cold start.
     depends_on:
-      - socket-proxy
-      - crowdsec
+      socket-proxy:
+        condition: service_started
+      crowdsec:
+        condition: service_healthy
     # Non-root so the 0400 secret files (owned by PUID) are readable with all
     # capabilities dropped; the sysctl lets it bind 443 without root.
     user: "${PUID}:${PGID}"
@@ -77,12 +81,12 @@ services:
       - --certificatesresolvers.cloudflare.acme.caServer=${ACME_CASERVER}
       - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
       - --certificatesresolvers.cloudflare.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53
-      # Plugins are downloaded at start (pinned versions) into /plugins-storage, the only
-      # writable path besides the logs and acme volumes (the container is read_only).
-      - --experimental.plugins.crowdsec.moduleName=github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
-      - --experimental.plugins.crowdsec.version=v1.7.1
-      - --experimental.plugins.geoblock.moduleName=github.com/PascalMinder/geoblock
-      - --experimental.plugins.geoblock.version=v0.3.8
+      # Local plugins: Traefik loads the source from /plugins-local/src/<moduleName>
+      # (read-only) and never downloads anything at start. The trees are installed by
+      # scripts/vm/45-traefik-plugins.sh at the tag and commit SHA locked in
+      # config/traefik/plugins.lock (crowdsec bouncer v1.7.1, geoblock v0.3.8).
+      - --experimental.localPlugins.crowdsec.moduleName=github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+      - --experimental.localPlugins.geoblock.moduleName=github.com/PascalMinder/geoblock
       - --accesslog=true
       - --accesslog.format=json
       - --accesslog.filepath=/var/log/traefik/access.log
@@ -96,7 +100,7 @@ services:
     volumes:
       - ${APPDATA_ROOT}/traefik/acme:/acme
       - ${APPDATA_ROOT}/traefik/logs:/var/log/traefik
-      - ${APPDATA_ROOT}/traefik/plugins-storage:/plugins-storage
+      - ${APPDATA_ROOT}/traefik/plugins-local:/plugins-local:ro
       - ../config/traefik/dynamic:/etc/traefik/dynamic:ro
     networks:
       - proxy
@@ -129,6 +133,10 @@ services:
       - traefik.http.middlewares.secure-headers.headers.referrerPolicy=strict-origin-when-cross-origin
       - traefik.http.middlewares.rate-limit.ratelimit.average=20
       - traefik.http.middlewares.rate-limit.ratelimit.burst=50
+      # Login brute-force brake for auth.<domain> (per source IP, Traefik's default
+      # criterion): 5 req/s sustained, bursts of 20 (a login page load fetches assets).
+      - traefik.http.middlewares.auth-rate-limit.ratelimit.average=5
+      - traefik.http.middlewares.auth-rate-limit.ratelimit.burst=20
       # Authentik forward-auth via the embedded outpost. Fails closed: if authentik-server
       # is down Traefik answers 5xx on every *.int route and never forwards to the app.
       - traefik.http.middlewares.authentik.forwardauth.address=http://authentik-server:9000/outpost.goauthentik.io/auth/traefik
@@ -156,12 +164,16 @@ services:
       - traefik.http.middlewares.geoblock.plugin.geoblock.apiTimeoutMs=1000
       # Chains: int = LAN/Twingate admin routes (allowlist, headers, Authentik),
       # lan-admin = LAN/Twingate only without forward-auth (Authentik's own /if/admin),
-      # public = internet-facing routes (CrowdSec, geo-block, rate limit, headers)
+      # public = internet-facing routes (CrowdSec, geo-block, rate limit, headers),
+      # public-auth = public with the stricter auth-rate-limit (auth.<domain> only)
       - traefik.http.middlewares.int.chain.middlewares=lan-only,secure-headers,authentik
       - traefik.http.middlewares.lan-admin.chain.middlewares=lan-only,secure-headers
       - traefik.http.middlewares.public.chain.middlewares=crowdsec,geoblock,rate-limit,secure-headers
+      - traefik.http.middlewares.public-auth.chain.middlewares=crowdsec,geoblock,auth-rate-limit,secure-headers
 
   # Keeps plex/requests/auth A records on the WAN IP. Distroless image: no shell, so no healthcheck.
+  # Own token (cf_ddns_api_token), separate from Traefik's ACME token, so either can
+  # be rotated or revoked on its own.
   cloudflare-ddns:
     extends:
       file: _common.yaml
@@ -176,9 +188,9 @@ services:
       PROXIED: "false"
       IP6_PROVIDER: none
       UPDATE_CRON: "@every 5m"
-      CLOUDFLARE_API_TOKEN_FILE: /run/secrets/cf_dns_api_token
+      CLOUDFLARE_API_TOKEN_FILE: /run/secrets/cf_ddns_api_token
     secrets:
-      - cf_dns_api_token
+      - cf_ddns_api_token
 
   # Authentik 2026.8 needs no Redis: since 2025.10 cache, sessions and the task queue
   # live in PostgreSQL (upstream compose.yml for 2026.8.3 ships only postgresql, server
@@ -259,16 +271,50 @@ services:
       start_period: 60s
     labels:
       - traefik.enable=true
-      # Login, flows and the forward-auth callback: public (rate-limited by public@docker).
-      # Never add authentik@docker here: the auth router would call itself in a loop.
+      # Login, flows and the forward-auth callback: public, with the stricter login rate
+      # limit (public-auth@docker). Never add authentik@docker here: the auth router
+      # would call itself in a loop.
       - traefik.http.routers.auth.rule=Host(`auth.${DOMAIN}`)
-      - traefik.http.routers.auth.middlewares=public@docker
+      - traefik.http.routers.auth.middlewares=public-auth@docker
       - traefik.http.routers.auth.service=authentik
       # Admin interface: LAN/Twingate only. Priority 100 so it matches before auth.
       - traefik.http.routers.auth-admin.rule=Host(`auth.${DOMAIN}`) && PathPrefix(`/if/admin`)
       - traefik.http.routers.auth-admin.middlewares=lan-admin@docker
       - traefik.http.routers.auth-admin.priority=100
       - traefik.http.routers.auth-admin.service=authentik
+      # Admin-only API: LAN/Twingate only, so a stolen admin session or API token is
+      # useless from the internet for these endpoints. Priority 110: above auth (whose
+      # priority is its short rule's length) and auth-admin (no overlap with /if/admin).
+      # The list is the /api/v3/ prefixes that only the admin interface calls. Derived from
+      # the 2026.8.3 image's web bundle (/web/dist): following the imports of
+      # AdminInterface, FlowInterface, UserInterface, rac and api-browser, and mapping the
+      # generated-client methods each one calls to their paths. Everything the flow
+      # executor, login, enrollment, recovery, invitation and the user interface call
+      # stays public: flows/executor, flows/inspector, flows/instances, root/config,
+      # admin/version, core/users/me, switch, account_lockdown, impersonate_end,
+      # core/applications, core/tokens, core/brands, core/authenticated_sessions,
+      # core/user_consent, authenticators/<type>/ (own devices), stages/all,
+      # stages/authenticator/duo, sources/all, plex, telegram, user_connections,
+      # events/notifications, rac/endpoints, requests/grant-requests, agents, enterprise.
+      # The forward-auth outpost (/outpost.goauthentik.io) is not under /api/v3/.
+      # Re-derive it on every Authentik upgrade (runbook 04, section 6.8).
+      # One regex; the backslash-newlines (YAML double-quoted folding) join the parts with
+      # no spaces, so the label is a single line.
+      - "traefik.http.routers.auth-admin-api.rule=Host(`auth.${DOMAIN}`) && PathRegexp(`^/api/v3/(\
+        crypto|endpoints|lifecycle|managed|oauth2|outposts|policies|propertymappings|providers|\
+        rbac|reports|ssf|tasks|\
+        admin/(apps|file|models|settings|system)|authenticators/admin|\
+        core/(groups|object_attributes|transactional)|core/users/(export|paths|service_account|[0-9]+)|\
+        events/(events|rules|transports)|flows/bindings|rac/connection_tokens|\
+        requests/(rules|rule-bindings|rule-child-bindings)|\
+        sources/(group_connections|kerberos|ldap|oauth|saml|scim|scim_groups|scim_users)|\
+        stages/(account_lockdown|captcha|consent|deny|dummy|email|endpoints|identification|invitation|\
+        mtls|password|prompt|redirect|source|user_delete|user_login|user_logout|user_write|\
+        authenticator/(email|endpoint_gdtc|sms|static|totp|validate|webauthn|webauthn_device_types))\
+        )/|^/api/v3/core/users/?$$`)"
+      - traefik.http.routers.auth-admin-api.middlewares=lan-admin@docker
+      - traefik.http.routers.auth-admin-api.priority=110
+      - traefik.http.routers.auth-admin-api.service=authentik
       - traefik.http.services.authentik.loadbalancer.server.port=9000
 
   # Background tasks and blueprint apply. No docker.sock: only the embedded outpost is used.
@@ -297,7 +343,7 @@ services:
       service: base
     image: crowdsecurity/crowdsec:v1.8.1
     environment:
-      # No third-party collections: the hub's only Authentik collection is community-made.
+      # No Authentik collection: CrowdSec only reads Traefik's access log; auth brute force is covered by auth-rate-limit and the generic HTTP scenarios.
       COLLECTIONS: crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/base-http-scenarios
     # The image's start script registers every /run/secrets/bouncer_key_<name> file as
     # bouncer <name> (only if not already registered), so the key never enters the env.
@@ -337,8 +383,12 @@ networks:
     driver: bridge
 
 secrets:
+  # Two Cloudflare tokens, each Zone:Zone:Read + Zone:DNS:Edit on this zone only:
+  # cf_dns_api_token for Traefik's ACME DNS-01, cf_ddns_api_token for cloudflare-ddns.
   cf_dns_api_token:
     file: ../secrets/cf_dns_api_token
+  cf_ddns_api_token:
+    file: ../secrets/cf_ddns_api_token
   authentik_secret_key:
     file: ../secrets/authentik_secret_key
   authentik_pg_password:

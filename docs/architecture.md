@@ -114,15 +114,16 @@ Plex's `32400` is the only port the stack files publish, and the only permanent 
 
 Admin UIs publish no ports at all: they are reached only as `<service>.int.<domain>`, through Twingate, Traefik's `lan-only` allowlist and Authentik forward-auth (see runbook 04).
 
-Traefik applies three middleware chains, defined once as labels on the `traefik` service:
+Traefik applies four middleware chains, defined once as labels on the `traefik` service:
 
 | Chain | Middlewares | Used by |
 |-------|-------------|---------|
 | `int` | `lan-only`, `secure-headers`, `authentik` | Every `*.int.<domain>` route and the Traefik dashboard |
-| `lan-admin` | `lan-only`, `secure-headers` | Authentik's own `/if/admin` (no forward-auth, or it would protect itself) |
-| `public` | `crowdsec`, `geoblock`, `rate-limit`, `secure-headers` | The internet-facing routes: Seerr, Authentik login, and Jellyfin if adopted |
+| `lan-admin` | `lan-only`, `secure-headers` | Authentik's own `/if/admin` and its admin-only `/api/v3/` prefixes (no forward-auth, or it would protect itself) |
+| `public` | `crowdsec`, `geoblock`, `rate-limit`, `secure-headers` | The internet-facing routes: Seerr, and Jellyfin if adopted |
+| `public-auth` | `crowdsec`, `geoblock`, `auth-rate-limit`, `secure-headers` | The Authentik login (`auth.<domain>`), with a stricter per-address rate limit |
 
-The CrowdSec engine runs on its own `crowdsec` network, shared only with Traefik's bouncer plugin, and reads Traefik's access log. The geo-block admits only `GEO_ALLOWED_COUNTRIES` (private addresses always pass). Plex is not behind Traefik: `32400/tcp` is forwarded straight to Plex, which is the only exposure besides 443.
+The CrowdSec engine runs on its own `crowdsec` network, shared only with Traefik's bouncer plugin, and reads Traefik's access log. Both Traefik plugins are local plugins: `scripts/vm/45-traefik-plugins.sh` installs them at the commits locked in `config/traefik/plugins.lock`, and Traefik loads them read-only without downloading anything. The geo-block admits only `GEO_ALLOWED_COUNTRIES` (private addresses always pass). Plex is not behind Traefik: `32400/tcp` is forwarded straight to Plex, which is the only exposure besides 443.
 
 ## Service template
 New services extend the shared `base` template from `stacks/_common.yaml` instead of repeating `restart`, `security_opt`, `environment`, `dns` and `logging` on every service. The template sets the container DNS servers (`DNS_PRIMARY` / `DNS_SECONDARY` in `.env`, default `1.1.1.1` and `8.8.8.8`): Docker's built-in DNS forwards to the VM's `resolv.conf` list, and a slow or dead first entry made lookups time out inside containers:

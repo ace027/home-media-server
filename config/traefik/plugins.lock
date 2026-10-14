@@ -1,0 +1,15 @@
+# Traefik local plugins, installed by scripts/vm/45-traefik-plugins.sh under
+# ${APPDATA_ROOT}/traefik/plugins-local/src/<module> and loaded by stacks/edge.yaml
+# (--experimental.localPlugins.<name>.moduleName=<module>).
+#
+# One plugin per line: <name> <module> <tag> <commit>
+#   name    the plugin key used in stacks/edge.yaml (traefik.http.middlewares.*.plugin.<name>)
+#   module  Go module path; cloned from https://<module>
+#   tag     release tag to clone
+#   commit  full 40-hex commit SHA the tag must point to (the peeled commit for an
+#           annotated tag); the install aborts if the tag now points elsewhere
+#
+# Resolve a commit with: git ls-remote https://<module> 'refs/tags/<tag>*'
+# (use the ^{} line when there is one). Upgrade procedure: runbook 04, section 7.
+crowdsec github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin v1.7.1 bef5dfaadbb07381af02ec4e7391e49214ebf953
+geoblock github.com/PascalMinder/geoblock v0.3.8 d3a04598e3068361b2f3fdde90d14d9fea8312dd

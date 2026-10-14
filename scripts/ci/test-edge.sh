@@ -58,15 +58,15 @@ test_only_seerr_is_public() {
   others="$(jq -r '[.services | to_entries[] | .value.labels // {} | to_entries[]
     | select((.key | test("^traefik\\.http\\.routers\\.[^.]+\\.middlewares$")) and .value != "int@docker")
     | "\(.key | capture("routers\\.(?<r>[^.]+)\\.").r)=\(.value)"] | sort | join(",")' <<<"$FULL")"
-  [[ "$others" == "auth-admin=lan-admin@docker,auth=public@docker,seerr=public@docker" ]] \
-    || fail "routers not using int@docker: '$others' (want only auth-admin=lan-admin@docker, auth and seerr=public@docker)"
+  [[ "$others" == "auth-admin-api=lan-admin@docker,auth-admin=lan-admin@docker,auth=public-auth@docker,seerr=public@docker" ]] \
+    || fail "routers not using int@docker: '$others' (want only auth-admin and auth-admin-api=lan-admin@docker, auth=public-auth@docker, seerr=public@docker)"
   jq -e '.services.seerr.labels["traefik.http.routers.seerr.rule"] | test("^Host\\(`requests\\.[^`]+`\\)$")' <<<"$FULL" >/dev/null \
     || fail "seerr rule is not Host(\`requests.<domain>\`)"
   jq -e '.services.traefik.labels["traefik.http.routers.dashboard.rule"] | test("^Host\\(`traefik\\.int\\.[^`]+`\\)$")' <<<"$FULL" >/dev/null \
     || fail "dashboard rule is not Host(\`traefik.int.<domain>\`)"
   jq -e '.services.traefik.labels["traefik.http.routers.dashboard.service"] == "api@internal"' <<<"$FULL" >/dev/null \
     || fail "dashboard router service is not api@internal"
-  ok "only seerr and auth are public@docker (plus auth-admin on lan-admin); the dashboard is on traefik.int"
+  ok "only seerr (public) and auth (public-auth) are internet-facing (plus auth-admin, auth-admin-api on lan-admin); the dashboard is on traefik.int"
 }
 
 test_chains() {
@@ -74,6 +74,10 @@ test_chains() {
     | .["traefik.http.middlewares.int.chain.middlewares"] == "lan-only,secure-headers,authentik"
       and .["traefik.http.middlewares.lan-admin.chain.middlewares"] == "lan-only,secure-headers"
       and .["traefik.http.middlewares.public.chain.middlewares"] == "crowdsec,geoblock,rate-limit,secure-headers"
+      and .["traefik.http.middlewares.public-auth.chain.middlewares"] == "crowdsec,geoblock,auth-rate-limit,secure-headers"
+      and .["traefik.http.middlewares.auth-rate-limit.ratelimit.average"] == "5"
+      and .["traefik.http.middlewares.auth-rate-limit.ratelimit.burst"] == "20"
+      and ([keys[] | select(test("^traefik\\.http\\.middlewares\\.auth-rate-limit\\.ratelimit\\.sourcecriterion"))] | length == 0)
       and (.["traefik.http.middlewares.lan-only.ipallowlist.sourcerange"] | length > 0)
       and .["traefik.http.middlewares.secure-headers.headers.stsSeconds"] == "31536000"
       and .["traefik.http.middlewares.secure-headers.headers.frameDeny"] == "true"
@@ -86,7 +90,7 @@ test_chains() {
       and .["traefik.http.middlewares.authentik.forwardauth.authResponseHeaders"]
         == "X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid"' <<<"$FULL" >/dev/null \
     || fail "authentik forwardauth middleware labels are not as specified"
-  ok "int (lan-only, secure-headers, authentik), lan-admin and public chains and their middlewares"
+  ok "int (lan-only, secure-headers, authentik), lan-admin, public and public-auth (auth-rate-limit 5/20 per client IP) chains"
 }
 
 test_published_ports() {
@@ -112,15 +116,17 @@ test_ddns() {
   jq -e '.services["cloudflare-ddns"].environment
     | .UPDATE_CRON == "@every 5m"
       and .PROXIED == "false"
-      and .CLOUDFLARE_API_TOKEN_FILE == "/run/secrets/cf_dns_api_token"
+      and .CLOUDFLARE_API_TOKEN_FILE == "/run/secrets/cf_ddns_api_token"
       and (has("CLOUDFLARE_API_TOKEN") | not)' <<<"$FULL" >/dev/null \
-    || fail "cloudflare-ddns env is not UPDATE_CRON=@every 5m, PROXIED=false, token from the secret file"
+    || fail "cloudflare-ddns env is not UPDATE_CRON=@every 5m, PROXIED=false, token from the cf_ddns_api_token file"
   jq -e '.services["cloudflare-ddns"].environment.DOMAINS | split(",")
     | length == 3 and (.[0] | test("^plex\\.")) and (.[1] | test("^requests\\.")) and (.[2] | test("^auth\\."))' <<<"$FULL" >/dev/null \
     || fail "cloudflare-ddns DOMAINS is not plex, requests, auth"
-  jq -e '.services["cloudflare-ddns"].secrets | any(.source == "cf_dns_api_token" and .target == "/run/secrets/cf_dns_api_token")' <<<"$FULL" >/dev/null \
-    || fail "cloudflare-ddns does not mount the cf_dns_api_token secret"
-  ok "cloudflare-ddns: every 5m, not proxied, plex/requests/auth, token from its secret"
+  jq -e '.services["cloudflare-ddns"].secrets | map(.source) == ["cf_ddns_api_token"]' <<<"$FULL" >/dev/null \
+    || fail "cloudflare-ddns must mount only the cf_ddns_api_token secret (not Traefik's cf_dns_api_token)"
+  jq -e '.services.traefik.secrets | map(.source) | index("cf_ddns_api_token") | not' <<<"$FULL" >/dev/null \
+    || fail "traefik mounts cf_ddns_api_token (it must use only cf_dns_api_token)"
+  ok "cloudflare-ddns: every 5m, not proxied, plex/requests/auth, its own cf_ddns_api_token"
 }
 
 test_acme_dns01() {
@@ -136,10 +142,16 @@ test_acme_dns01() {
     || fail "websecure certResolver is not cloudflare"
   grep -qx -- '--certificatesresolvers.cloudflare.acme.storage=/acme/acme.json' <<<"$cmd" \
     || fail "acme storage is not /acme/acme.json"
-  ca="$(grep -E '^ACME_CASERVER=' .env | tail -n 1 | cut -d= -f2-)"
-  [[ -n "$ca" ]] || ca="$(sed -n 's/^ACME_CASERVER=//p' .env.example | tail -n 1)"
+  # ACME_CASERVER as Compose resolved it (from .env or the environment; Compose strips
+  # quotes); quotes are stripped again in case a value kept them.
+  ca="$(docker compose -f compose.yaml config --environment 2>/dev/null | sed -n 's/^ACME_CASERVER=//p' | tail -n 1)" || ca=""
+  ca="${ca#[\"\']}"
+  ca="${ca%[\"\']}"
+  [[ -n "$ca" ]] || fail "ACME_CASERVER is not set (add it to .env from .env.example)"
+  [[ "$ca" =~ ^https://acme(-staging)?-v02\.api\.letsencrypt\.org/directory$ ]] \
+    || fail "ACME_CASERVER '$ca' is not a Let's Encrypt staging or production directory"
   grep -qxF -- "--certificatesresolvers.cloudflare.acme.caServer=$ca" <<<"$cmd" \
-    || fail "acme caServer does not follow ACME_CASERVER"
+    || fail "acme caServer does not follow ACME_CASERVER ($ca)" "$(grep caServer <<<"$cmd")"
   jq -e '.services.traefik.secrets | any(.source == "cf_dns_api_token")' <<<"$FULL" >/dev/null \
     || fail "traefik does not mount the cf_dns_api_token secret"
   jq -e '.services.traefik.environment | has("CF_DNS_API_TOKEN_FILE") or has("CLOUDFLARE_DNS_API_TOKEN_FILE")' <<<"$FULL" >/dev/null \
@@ -149,6 +161,18 @@ test_acme_dns01() {
   grep -qE '^[[:space:]]*minVersion: VersionTLS1[23]$' "$tls" || fail "tls.yml minVersion is not TLS 1.2 or 1.3"
   grep -qE '^[[:space:]]*sniStrict: true$' "$tls" || fail "tls.yml lacks sniStrict: true"
   ok "acme DNS-01 via cloudflare, wildcard SANs (*.$dom, *.int.$dom), storage, caServer, tls.yml"
+}
+
+test_acme_staging_default() {
+  local active
+  active="$(sed -n 's/^ACME_CASERVER=//p' .env.example)"
+  [[ "$active" == "https://acme-staging-v02.api.letsencrypt.org/directory" ]] \
+    || fail ".env.example's active ACME_CASERVER is '$active', want the Let's Encrypt staging URL"
+  [[ "$(grep -c '^ACME_CASERVER=' .env.example)" -eq 1 ]] || fail ".env.example has more than one active ACME_CASERVER"
+  grep -qE '^#.*acme\.json' .env.example || fail ".env.example does not say to delete acme.json when switching to production"
+  grep -qE '^# ACME_CASERVER=https://acme-v02\.api\.letsencrypt\.org/directory$' .env.example \
+    || fail ".env.example lacks the commented production ACME_CASERVER"
+  ok ".env.example starts on Let's Encrypt staging, production commented with the acme.json note"
 }
 
 test_socket_proxy() {
@@ -167,8 +191,11 @@ test_socket_proxy() {
 }
 
 test_secret_paths() {
-  jq -e --arg p "$REPO/secrets/cf_dns_api_token" '.secrets.cf_dns_api_token.file == $p' <<<"$FULL" >/dev/null \
-    || fail "cf_dns_api_token secret does not resolve to <repo>/secrets/cf_dns_api_token"
+  local n
+  for n in cf_dns_api_token cf_ddns_api_token; do
+    jq -e --arg p "$REPO/secrets/$n" --arg n "$n" '.secrets[$n].file == $p' <<<"$FULL" >/dev/null \
+      || fail "$n secret does not resolve to <repo>/secrets/$n"
+  done
   ok "compose secrets resolve to <repo>/secrets"
 }
 
@@ -196,10 +223,10 @@ test_authentik_networks() {
 test_auth_routers() {
   jq -e '.services["authentik-server"].labels
     | (.["traefik.http.routers.auth.rule"] | test("^Host\\(`auth\\.[^`]+`\\)$"))
-      and .["traefik.http.routers.auth.middlewares"] == "public@docker"
+      and .["traefik.http.routers.auth.middlewares"] == "public-auth@docker"
       and .["traefik.http.routers.auth.service"] == "authentik"
       and .["traefik.http.services.authentik.loadbalancer.server.port"] == "9000"' <<<"$FULL" >/dev/null \
-    || fail "auth router is not Host(auth.<domain>) -> public@docker -> authentik:9000"
+    || fail "auth router is not Host(auth.<domain>) -> public-auth@docker -> authentik:9000"
   # authentik@docker on the auth router would send Authentik's own login through
   # forward-auth (a redirect loop); int@docker contains it, so both are banned.
   jq -e '.services["authentik-server"].labels["traefik.http.routers.auth.middlewares"]
@@ -211,7 +238,55 @@ test_auth_routers() {
       and .["traefik.http.routers.auth-admin.priority"] == "100"
       and .["traefik.http.routers.auth-admin.service"] == "authentik"' <<<"$FULL" >/dev/null \
     || fail "auth-admin router is not PathPrefix(/if/admin) -> lan-admin@docker with priority 100"
-  ok "auth is public without forward-auth; auth-admin (/if/admin) is lan-admin with priority 100"
+  ok "auth is public-auth without forward-auth; auth-admin (/if/admin) is lan-admin with priority 100"
+}
+
+# Admin-only Authentik API prefixes (derived from the 2026.8.3 web bundle, see the
+# comment on the auth-admin-api router) and paths the flow executor, the user
+# interface and the outpost need, which must stay on the public auth router.
+AK_ADMIN_PATHS=(/api/v3/policies/all/ /api/v3/policies/bindings/ /api/v3/propertymappings/all/
+  /api/v3/providers/proxy/ /api/v3/outposts/instances/ /api/v3/rbac/roles/ /api/v3/managed/blueprints/
+  /api/v3/admin/system/ /api/v3/admin/settings/ /api/v3/crypto/certificatekeypairs/
+  /api/v3/events/rules/ /api/v3/events/transports/ /api/v3/events/events/ /api/v3/flows/bindings/
+  /api/v3/stages/prompt/stages/ /api/v3/stages/invitation/invitations/ /api/v3/stages/authenticator/totp/
+  /api/v3/sources/oauth/ /api/v3/sources/ldap/ /api/v3/core/groups/ /api/v3/core/users/
+  /api/v3/core/users/7/set_password/ /api/v3/core/users/7/recovery/ /api/v3/authenticators/admin/all/
+  /api/v3/tasks/tasks/ /api/v3/oauth2/access_tokens/)
+AK_PUBLIC_PATHS=(/api/v3/root/config/ /api/v3/flows/executor/default-authentication-flow/
+  /api/v3/flows/instances/default-authentication-flow/ /api/v3/flows/inspector/x/
+  /api/v3/core/users/me/ /api/v3/core/users/switch/ /api/v3/core/applications/ /api/v3/core/tokens/
+  /api/v3/core/tokens/abc/view_key/ /api/v3/core/brands/current/ /api/v3/core/authenticated_sessions/
+  /api/v3/core/user_consent/ /api/v3/authenticators/all/ /api/v3/authenticators/totp/3/
+  /api/v3/authenticators/webauthn/3/ /api/v3/stages/all/user_settings/
+  /api/v3/stages/authenticator/duo/x/enrollment_status/ /api/v3/sources/all/user_settings/
+  /api/v3/sources/plex/redeem_token/ /api/v3/sources/user_connections/all/ /api/v3/admin/version/
+  /api/v3/events/notifications/ /api/v3/rac/endpoints/ /api/v3/requests/grant-requests/
+  /api/v3/ /outpost.goauthentik.io/auth/traefik /if/user/ /if/flow/default-authentication-flow/
+  /-/health/live/)
+
+test_auth_admin_api_router() {
+  local rule re p
+  jq -e '.services["authentik-server"].labels
+    | .["traefik.http.routers.auth-admin-api.middlewares"] == "lan-admin@docker"
+      and .["traefik.http.routers.auth-admin-api.service"] == "authentik"
+      and (.["traefik.http.routers.auth-admin-api.priority"] | tonumber) > 100
+      and (has("traefik.http.routers.auth.priority") | not)' <<<"$FULL" >/dev/null \
+    || fail "auth-admin-api is not lan-admin@docker -> authentik with a priority above auth-admin (100) and auth"
+  rule="$(jq -r '.services["authentik-server"].labels["traefik.http.routers.auth-admin-api.rule"]' <<<"$FULL")"
+  [[ "$rule" =~ ^Host\(\`auth\.[^\`]+\`\)\ \&\&\ PathRegexp\(\`(.+)\`\)$ ]] \
+    || fail "auth-admin-api rule is not Host(auth.<domain>) && PathRegexp(...)" "$rule"
+  # docker compose config re-escapes \$ as \$\$; the container label has a single \$.
+  re="${BASH_REMATCH[1]//\$\$/\$}"
+  for p in "${AK_ADMIN_PATHS[@]}"; do
+    jq -en --arg p "$p" --arg re "$re" '$p | test($re)' >/dev/null \
+      || fail "auth-admin-api rule does not cover admin-only $p"
+  done
+  for p in "${AK_PUBLIC_PATHS[@]}"; do
+    if jq -en --arg p "$p" --arg re "$re" '$p | test($re)' >/dev/null; then
+      fail "auth-admin-api rule would make $p LAN-only (flows, the user interface or the outpost need it)"
+    fi
+  done
+  ok "auth-admin-api: lan-admin, priority above auth-admin; covers ${#AK_ADMIN_PATHS[@]} admin-only paths, spares ${#AK_PUBLIC_PATHS[@]} public ones"
 }
 
 test_authentik_services() {
@@ -277,22 +352,38 @@ test_blueprints() {
 # ==============================================================================
 # CrowdSec and geo-block (plan 03-03)
 # ==============================================================================
-test_plugins_pinned() {
-  local cmd
+test_plugins_local() {
+  local cmd lock="$REPO/config/traefik/plugins.lock" want got
+  [[ -f "$lock" ]] || fail "missing config/traefik/plugins.lock"
+  # Every non-comment line: <name> <module> <tag vX.Y.Z> <40-hex commit>.
+  if grep -vqE '^[a-z][a-z0-9-]* [A-Za-z0-9.-]+(/[A-Za-z0-9_.-]+)+ v[0-9]+\.[0-9]+\.[0-9]+ [0-9a-f]{40}$' \
+      <<<"$(grep -vE '^[[:space:]]*(#|$)' "$lock" || true)"; then
+    fail "plugins.lock has a malformed line (want '<name> <module> <vX.Y.Z> <40-hex sha>')"
+  fi
+  want="$(grep -vE '^[[:space:]]*(#|$)' "$lock" | awk '{print "--experimental.localPlugins." $1 ".moduleName=" $2}' | sort)"
+  [[ -n "$want" ]] || fail "plugins.lock lists no plugins"
   cmd="$(jq -r '.services.traefik.command[]' <<<"$FULL")"
-  grep -qx -- '--experimental.plugins.crowdsec.moduleName=github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin' <<<"$cmd" \
-    || fail "crowdsec bouncer plugin moduleName is missing or wrong"
-  grep -qx -- '--experimental.plugins.geoblock.moduleName=github.com/PascalMinder/geoblock' <<<"$cmd" \
-    || fail "geoblock plugin moduleName is missing or wrong"
-  grep -qE -- '^--experimental\.plugins\.crowdsec\.version=v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$cmd" \
-    || fail "crowdsec plugin version is not a v-prefixed release (no latest, no pre-release)"
-  grep -qE -- '^--experimental\.plugins\.geoblock\.version=v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$cmd" \
-    || fail "geoblock plugin version is not a v-prefixed release (no latest, no pre-release)"
-  jq -e '.services.traefik.volumes | any(.target == "/plugins-storage" and (.read_only // false) == false)' <<<"$FULL" >/dev/null \
-    || fail "traefik has no writable /plugins-storage volume"
+  got="$(grep -E -- '^--experimental\.localPlugins\.' <<<"$cmd" | sort)" || got=""
+  [[ "$got" == "$want" ]] || fail "traefik localPlugins flags do not match plugins.lock" "want:
+$want
+got:
+$got"
+  if grep -qE -- '^--experimental\.plugins\.' <<<"$cmd"; then
+    fail "traefik still has catalog (--experimental.plugins.*) flags; plugins must be local"
+  fi
+  jq -e '.services.traefik.volumes | any(.target == "/plugins-local" and .read_only == true)
+    and all(.target != "/plugins-storage")' <<<"$FULL" >/dev/null \
+    || fail "traefik must mount /plugins-local read-only and no /plugins-storage"
   jq -e '.services.traefik.secrets | any(.source == "crowdsec_bouncer_key")' <<<"$FULL" >/dev/null \
     || fail "traefik does not mount the crowdsec_bouncer_key secret"
-  ok "plugins pinned to v-prefixed releases; writable /plugins-storage; bouncer key mounted"
+  ok "plugins: local only, exactly the plugins.lock modules, /plugins-local read-only; bouncer key mounted"
+}
+
+test_traefik_depends_on() {
+  jq -e '.services.traefik.depends_on
+    | .crowdsec.condition == "service_healthy" and .["socket-proxy"].condition == "service_started"' <<<"$FULL" >/dev/null \
+    || fail "traefik depends_on is not crowdsec: service_healthy, socket-proxy: service_started"
+  ok "traefik waits for a healthy crowdsec and a started socket-proxy"
 }
 
 test_plugin_middlewares() {
@@ -329,7 +420,9 @@ test_crowdsec_service() {
     || fail "network crowdsec is not a bridge named crowdsec"
   jq -e '.services.crowdsec.image | test("^crowdsecurity/crowdsec:v[0-9]+\\.[0-9]+\\.[0-9]+$")' <<<"$FULL" >/dev/null \
     || fail "crowdsec image is not an exact release tag"
-  jq -e '.services.crowdsec.environment.COLLECTIONS | (contains("crowdsecurity/traefik") and contains("crowdsecurity/http-cve") and contains("crowdsecurity/base-http-scenarios"))' <<<"$FULL" >/dev/null \
+  jq -e '.services.crowdsec.environment.COLLECTIONS | split(" ")
+    | index("crowdsecurity/traefik") and index("crowdsecurity/http-cve")
+      and index("crowdsecurity/base-http-scenarios")' <<<"$FULL" >/dev/null \
     || fail "crowdsec COLLECTIONS lacks traefik, http-cve or base-http-scenarios"
   jq -e '.services.crowdsec.secrets | any(.source == "crowdsec_bouncer_key" and (.target | startswith("bouncer_key_")))' <<<"$FULL" >/dev/null \
     || fail "crowdsec_bouncer_key is not mounted as /run/secrets/bouncer_key_<name> (the image registers the bouncer from it)"
@@ -344,9 +437,36 @@ test_crowdsec_service() {
   grep -q 'type: traefik' "$acq" || fail "config/crowdsec/acquis.yaml does not label the source type: traefik"
   grep -q '/var/log/traefik/access.log' "$acq" || fail "config/crowdsec/acquis.yaml does not read the Traefik access log"
   grep -qE '^[[:space:]]*weekly$' "$lr" || fail "config/logrotate/traefik-access is not weekly"
-  grep -q 'rotate 4' "$lr" || fail "config/logrotate/traefik-access does not keep 4 rotations"
+  grep -qE '^[[:space:]]*rotate 2$' "$lr" || fail "config/logrotate/traefik-access does not keep 2 rotations"
   grep -q 'copytruncate' "$lr" || fail "config/logrotate/traefik-access does not use copytruncate"
+  grep -qE '^[[:space:]]*su [0-9]+ [0-9]+$' "$lr" || fail "config/logrotate/traefik-access has no 'su <uid> <gid>'"
+  grep -qE '^[[:space:]]*create 0640 [0-9]+ [0-9]+$' "$lr" || fail "config/logrotate/traefik-access has no 'create 0640 <uid> <gid>'"
   ok "crowdsec: own network shared with traefik only, no ports, pinned, key registered from its secret, acquis and logrotate files"
+}
+
+test_mkdirs_edge() {
+  local d="$tmp/mkdirs" mode
+  DATA_ROOT="$d/data" APPDATA_ROOT="$d/appdata" "$REPO/scripts/mkdirs.sh" >/dev/null 2>&1 || fail "mkdirs.sh failed"
+  mode="$(stat -c %a "$d/appdata/traefik/logs")"
+  [[ "$mode" =~ ^[0-7]?750$ ]] || fail "traefik/logs has mode $mode, want 0750 (no group write)"
+  [[ -d "$d/appdata/traefik/plugins-local" ]] || fail "mkdirs.sh does not create traefik/plugins-local"
+  [[ ! -e "$d/appdata/traefik/plugins-storage" ]] || fail "mkdirs.sh still creates traefik/plugins-storage"
+  chmod 0775 "$d/appdata/traefik/logs"
+  DATA_ROOT="$d/data" APPDATA_ROOT="$d/appdata" "$REPO/scripts/mkdirs.sh" >/dev/null 2>&1 || fail "mkdirs.sh re-run failed"
+  mode="$(stat -c %a "$d/appdata/traefik/logs")"
+  [[ "$mode" =~ ^[0-7]?750$ ]] || fail "a re-run does not reset traefik/logs to 0750 (mode $mode)"
+  grep -q 'su 1000 1000' "$REPO/config/logrotate/traefik-access" \
+    || fail "logrotate su line is not the documented default PUID/PGID 1000 1000"
+  ok "mkdirs: traefik/logs 0750 (reset on re-run), plugins-local, no plugins-storage"
+}
+
+test_invitation_password_policy() {
+  local f="$REPO/config/authentik/blueprints/30-invitation-enrollment.yaml"
+  grep -qE '^[[:space:]]+length_min: 12$' "$f" || fail "invitation password policy length_min is not 12"
+  grep -qE '^[[:space:]]+check_zxcvbn: true$' "$f" || fail "invitation password policy does not check zxcvbn"
+  grep -qE '^[[:space:]]+zxcvbn_score_threshold: 2$' "$f" || fail "invitation password policy zxcvbn_score_threshold is not 2 (scores 3 and 4 pass)"
+  grep -qE '^[[:space:]]+check_have_i_been_pwned: true$' "$f" || fail "invitation password policy does not check Have I Been Pwned"
+  ok "invitation password policy: length 12, zxcvbn threshold 2 (scores 3-4 pass), Have I Been Pwned"
 }
 
 test_no_lan_override() {
@@ -375,9 +495,16 @@ test_edge_secrets() {
   for name in "${GENERATED[@]}"; do
     grep -qx "DRY-RUN: create $name" <<<"$out" || fail "secrets dry-run lacks 'DRY-RUN: create $name'"
   done
-  grep -q "^MISSING cf_dns_api_token: paste a Cloudflare API token (Zone:DNS:Edit, this zone only) into $d/cf_dns_api_token\$" <<<"$out" \
-    || fail "secrets dry-run does not report cf_dns_api_token MISSING" "$out"
-  ok "secrets dry-run creates nothing and reports MISSING cf_dns_api_token"
+  grep -qxF "MISSING cf_dns_api_token: paste a Cloudflare API token (Zone:Zone:Read and Zone:DNS:Edit, this zone only; Traefik ACME DNS-01) into $d/cf_dns_api_token" <<<"$out" \
+    || fail "secrets dry-run does not report cf_dns_api_token MISSING with Zone:Read + DNS:Edit" "$out"
+  grep -qxF "MISSING cf_ddns_api_token: paste a Cloudflare API token (Zone:Zone:Read and Zone:DNS:Edit, this zone only; cloudflare-ddns) into $d/cf_ddns_api_token" <<<"$out" \
+    || fail "secrets dry-run does not report cf_ddns_api_token MISSING with Zone:Read + DNS:Edit" "$out"
+  out="$("$SECRETS_SH" --help)"
+  if ! grep -q 'cf_ddns_api_token' <<<"$out" || ! grep -q 'Zone:Zone:Read and Zone:DNS:Edit' <<<"$out" \
+      || ! grep -qi 'Client IP Address Filtering' <<<"$out"; then
+    fail "40-edge-secrets.sh --help does not describe both tokens, their permissions and the IP-filter caveat"
+  fi
+  ok "secrets dry-run creates nothing and reports both Cloudflare tokens MISSING (Zone:Read + DNS:Edit)"
 
   out="$(SECRETS_DIR="$d" "$SECRETS_SH" --apply 2>&1)"
   for name in "${GENERATED[@]}"; do
@@ -387,9 +514,12 @@ test_edge_secrets() {
     [[ "$(stat -c %s "$d/$name")" -eq 48 ]] || fail "$name is not 48 bytes"
     grep -qE '^[A-Za-z0-9]{48}$' "$d/$name" || fail "$name is not 48 alphanumeric characters"
   done
-  [[ ! -e "$d/cf_dns_api_token" ]] || fail "secrets --apply created cf_dns_api_token"
-  grep -q '^MISSING cf_dns_api_token' <<<"$out" || fail "secrets --apply does not report cf_dns_api_token MISSING"
-  ok "secrets --apply creates the four generated files at mode 400"
+  for name in cf_dns_api_token cf_ddns_api_token; do
+    [[ ! -e "$d/$name" ]] || fail "secrets --apply created $name"
+    grep -q "^MISSING $name: " <<<"$out" || fail "secrets --apply does not report $name MISSING"
+  done
+  [[ -z "$(find "$d" -name '.*' -type f)" ]] || fail "secrets --apply left temporary files behind" "$(ls -la "$d")"
+  ok "secrets --apply creates the four generated files at mode 400 (no temp files left)"
 
   sums1="$(cd "$d" && sha256sum -- "${GENERATED[@]}")"
   local out2
@@ -408,6 +538,38 @@ test_edge_secrets() {
     fi
   done
   ok "no secret value appears in the output"
+
+  # F-13: a truncated, symlinked or non-file secret is reported INVALID, never kept or
+  # overwritten, and the run exits non-zero.
+  local e="$tmp/secrets-invalid" rc before
+  mkdir -p "$e"
+  printf 'short' >"$e/authentik_secret_key"
+  ln -s /dev/null "$e/authentik_pg_password"
+  mkdir "$e/authentik_bootstrap_password"
+  : >"$e/cf_dns_api_token"
+  printf 'cf-token-placeholder' >"$e/cf_ddns_api_token"
+  snap() {
+    (cd "$e" && stat -c '%n %F %s %Y %a' authentik_secret_key authentik_pg_password \
+      authentik_bootstrap_password cf_dns_api_token cf_ddns_api_token \
+      && cat authentik_secret_key cf_ddns_api_token)
+  }
+  before="$(snap)"
+  for mode in "" --apply; do
+    rc=0
+    out="$(SECRETS_DIR="$e" "$SECRETS_SH" $mode 2>&1)" || rc=$?
+    [[ $rc -ne 0 ]] || fail "secrets ${mode:-dry-run} exited 0 with invalid files" "$out"
+    grep -qx 'INVALID authentik_secret_key (5 bytes, want at least 48; remove it and re-run)' <<<"$out" \
+      || fail "secrets ${mode:-dry-run} does not report the 5-byte secret INVALID" "$out"
+    grep -q '^INVALID authentik_pg_password (a symlink;' <<<"$out" || fail "secrets ${mode:-dry-run} does not report the symlink INVALID" "$out"
+    grep -q '^INVALID authentik_bootstrap_password (not a regular file;' <<<"$out" \
+      || fail "secrets ${mode:-dry-run} does not report the directory INVALID" "$out"
+    grep -q '^INVALID cf_dns_api_token (0 bytes' <<<"$out" || fail "secrets ${mode:-dry-run} does not report the empty token INVALID" "$out"
+    grep -qx 'KEEP cf_ddns_api_token (exists)' <<<"$out" || fail "secrets ${mode:-dry-run} does not keep a non-empty token" "$out"
+  done
+  grep -qx 'CREATED crowdsec_bouncer_key' <<<"$out" || fail "secrets --apply did not create the one valid missing secret" "$out"
+  [[ "$(snap)" == "$before" ]] || fail "secrets --apply touched an INVALID or kept file"
+  [[ "$(readlink "$e/authentik_pg_password")" == /dev/null ]] || fail "secrets --apply replaced the symlink"
+  ok "INVALID (short, symlink, directory, empty token) is reported, left untouched and exits non-zero"
 }
 
 # ==============================================================================
@@ -415,8 +577,8 @@ test_edge_secrets() {
 # ==============================================================================
 VERIFY_IDS=(edge-healthy edge-ports no-docker-sock int-chains cert-wildcard
             ddns-records int-lan-only public-routes secure-headers
-            authentik-healthy auth-public authentik-admin-lan int-forward-auth authentik-mfa
-            crowdsec-healthy crowdsec-bouncer crowdsec-acquis public-chain no-lan-override
+            authentik-healthy auth-public authentik-admin-lan authentik-admin-api-lan
+            int-forward-auth authentik-mfa crowdsec-healthy crowdsec-bouncer crowdsec-acquis public-chain no-lan-override
             crowdsec-ban)
 
 test_verify_edge() {
@@ -434,21 +596,24 @@ test_verify_edge() {
   out="$(PATH="$bin:$PATH" SKIP_NET=1 DOMAIN=example.com LAN_CIDR=192.168.1.0/24 "$VERIFY_SH")" \
     || fail "verify-edge.sh with SKIP_NET=1 exited non-zero" "$out"
   n="$(grep -cE '^(PASS|FAIL|SKIP) ' <<<"$out")"
-  [[ "$n" -eq 20 ]] || fail "verify-edge.sh printed $n result lines, want 20" "$out"
+  [[ "$n" -eq ${#VERIFY_IDS[@]} ]] || fail "verify-edge.sh printed $n result lines, want ${#VERIFY_IDS[@]}" "$out"
   for id in "${VERIFY_IDS[@]}"; do
     grep -qE "^(PASS|SKIP) $id " <<<"$out" || fail "verify-edge.sh has no PASS/SKIP line for $id" "$out"
   done
-  tail -n 1 <<<"$out" | grep -qE '^RESULT: [0-9]+ pass, 0 fail, [0-9]+ skip$' \
+  grep -qE '^RESULT: [0-9]+ pass, 0 fail, [0-9]+ skip$' <<<"$(tail -n 1 <<<"$out")" \
     || fail "verify-edge.sh RESULT line has failures" "$out"
   grep -qx 'SKIP crowdsec-ban SKIP_NET=1\|SKIP crowdsec-ban run with --ban-test' <<<"$out" \
     || fail "crowdsec-ban is not skipped without --ban-test" "$out"
   out="$(PATH="$bin:$PATH" SKIP_NET=1 DOMAIN=example.com LAN_CIDR=192.168.1.0/24 "$VERIFY_SH" --ban-test)" \
     || fail "verify-edge.sh --ban-test with SKIP_NET=1 exited non-zero" "$out"
-  [[ "$(grep -cE '^(PASS|FAIL|SKIP) ' <<<"$out")" -eq 20 ]] || fail "verify-edge.sh --ban-test did not print 20 result lines" "$out"
+  [[ "$(grep -cE '^(PASS|FAIL|SKIP) ' <<<"$out")" -eq ${#VERIFY_IDS[@]} ]] || fail "verify-edge.sh --ban-test did not print ${#VERIFY_IDS[@]} result lines" "$out"
   rc=0
   "$VERIFY_SH" --bogus >/dev/null 2>&1 || rc=$?
   [[ $rc -eq 2 ]] || fail "verify-edge.sh --bogus exited $rc, want 2"
-  ok "verify-edge.sh SKIP_NET=1: 20 result lines, RESULT with 0 fail; --ban-test accepted"
+  [[ ${#VERIFY_IDS[@]} -eq 21 ]] || fail "VERIFY_IDS has ${#VERIFY_IDS[@]} IDs, want 21"
+  grep -qx 'SKIP authentik-admin-api-lan SKIP_NET=1' <<<"$(grep -A1 -x 'SKIP authentik-admin-lan SKIP_NET=1' <<<"$out" || true)" \
+    || fail "authentik-admin-api-lan does not come right after authentik-admin-lan" "$out"
+  ok "verify-edge.sh SKIP_NET=1: ${#VERIFY_IDS[@]} result lines, RESULT with 0 fail; --ban-test accepted"
 }
 
 # ==============================================================================
@@ -463,16 +628,21 @@ TESTS=(
   test_socket_proxy
   test_ddns
   test_acme_dns01
+  test_acme_staging_default
   test_secret_paths
   test_edge_secrets
   test_verify_edge
   test_authentik_networks
   test_auth_routers
+  test_auth_admin_api_router
+  test_invitation_password_policy
   test_authentik_services
   test_blueprints
-  test_plugins_pinned
+  test_plugins_local
+  test_traefik_depends_on
   test_plugin_middlewares
   test_crowdsec_service
+  test_mkdirs_edge
   test_no_lan_override
 )
 

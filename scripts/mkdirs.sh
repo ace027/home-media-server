@@ -111,11 +111,14 @@ fi
 
 # Edge appdata (Phase 3): Traefik, Authentik and CrowdSec state. Components
 # are walked like DATA_ROOT's so every new parent directory gets the same
-# treatment. traefik/acme holds the certificate key: mode 0700.
+# treatment. traefik/acme holds the certificate key: mode 0700. traefik/logs holds
+# the access log (client IPs, request URLs): mode 0750, written by Traefik as PUID and
+# read by CrowdSec as root. traefik/plugins-local holds the Traefik plugin sources
+# installed by scripts/vm/45-traefik-plugins.sh (mounted read-only).
 EDGE_DIRS=(
   "traefik/acme"
   "traefik/logs"
-  "traefik/plugins-storage"
+  "traefik/plugins-local"
   "authentik/media"
   "authentik/templates"
   "authentik/db"
@@ -144,6 +147,8 @@ for entry in "${EDGE_DIRS[@]}"; do
   fi
   if [[ "$entry" == "traefik/acme" ]]; then
     chmod 0700 "$path"
+  elif [[ "$entry" == "traefik/logs" ]]; then
+    chmod 0750 "$path"
   fi
 done
 

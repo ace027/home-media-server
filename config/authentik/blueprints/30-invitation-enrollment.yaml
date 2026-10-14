@@ -105,7 +105,12 @@ entries:
       placeholder_expression: false
       order: 1
 
-  # Minimum password length for invited accounts.
+  # Password rules for invited accounts: at least 12 characters, not in a known breach,
+  # and zxcvbn_score_threshold 2. Authentik fails the policy when the zxcvbn score is
+  # equal to or less than the threshold (authentik/policies/password/models.py), so
+  # scores 3 and 4 (of 4) pass. The Have I Been Pwned check uses k-anonymity (only the
+  # first 5 characters of the password's SHA-1 leave the server) and needs egress from
+  # authentik-server to api.pwnedpasswords.com.
   - model: authentik_policies_password.passwordpolicy
     id: password-policy
     state: present
@@ -119,9 +124,11 @@ entries:
       amount_lowercase: 0
       amount_symbols: 0
       check_static_rules: true
-      check_have_i_been_pwned: false
-      check_zxcvbn: false
-      error_message: Use at least 12 characters.
+      check_have_i_been_pwned: true
+      hibp_allowed_count: 0
+      check_zxcvbn: true
+      zxcvbn_score_threshold: 2
+      error_message: Use at least 12 characters, not a common or leaked password.
 
   - model: authentik_stages_prompt.promptstage
     id: prompt-credentials
