@@ -16,6 +16,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.prowlarr.rule=Host(`prowlarr.int.${DOMAIN}`)
+      - traefik.http.routers.prowlarr.middlewares=int@docker
+      - traefik.http.services.prowlarr.loadbalancer.server.port=9696
 
   sonarr:
     extends:
@@ -33,6 +38,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.sonarr.rule=Host(`sonarr.int.${DOMAIN}`)
+      - traefik.http.routers.sonarr.middlewares=int@docker
+      - traefik.http.services.sonarr.loadbalancer.server.port=8989
 
   sonarr-anime:
     extends:
@@ -50,6 +60,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.sonarr-anime.rule=Host(`sonarr-anime.int.${DOMAIN}`)
+      - traefik.http.routers.sonarr-anime.middlewares=int@docker
+      - traefik.http.services.sonarr-anime.loadbalancer.server.port=8989
 
   sonarr-4k:
     extends:
@@ -67,6 +82,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.sonarr-4k.rule=Host(`sonarr-4k.int.${DOMAIN}`)
+      - traefik.http.routers.sonarr-4k.middlewares=int@docker
+      - traefik.http.services.sonarr-4k.loadbalancer.server.port=8989
 
   radarr:
     extends:
@@ -84,6 +104,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.radarr.rule=Host(`radarr.int.${DOMAIN}`)
+      - traefik.http.routers.radarr.middlewares=int@docker
+      - traefik.http.services.radarr.loadbalancer.server.port=7878
 
   radarr-4k:
     extends:
@@ -101,6 +126,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.radarr-4k.rule=Host(`radarr-4k.int.${DOMAIN}`)
+      - traefik.http.routers.radarr-4k.middlewares=int@docker
+      - traefik.http.services.radarr-4k.loadbalancer.server.port=7878
 
   lidarr:
     extends:
@@ -118,6 +148,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.lidarr.rule=Host(`lidarr.int.${DOMAIN}`)
+      - traefik.http.routers.lidarr.middlewares=int@docker
+      - traefik.http.services.lidarr.loadbalancer.server.port=8686
 
 networks:
   proxy:

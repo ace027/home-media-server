@@ -17,6 +17,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.sabnzbd.rule=Host(`sabnzbd.int.${DOMAIN}`)
+      - traefik.http.routers.sabnzbd.middlewares=int@docker
+      - traefik.http.services.sabnzbd.loadbalancer.server.port=8080
 
 networks:
   proxy:

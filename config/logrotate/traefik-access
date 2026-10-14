@@ -1,0 +1,12 @@
+# Traefik does not rotate its access log. Install with:
+#   sudo install -m 0644 config/logrotate/traefik-access /etc/logrotate.d/traefik-access
+# Edit the path if APPDATA_ROOT is not /opt/appdata. copytruncate keeps Traefik and
+# CrowdSec writing/reading the same open file.
+/opt/appdata/traefik/logs/*.log {
+    weekly
+    rotate 4
+    compress
+    copytruncate
+    missingok
+    notifempty
+}

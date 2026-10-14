@@ -9,6 +9,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/arr.sh"
 load_env
 APPDATA_ROOT="${APPDATA_ROOT:-/opt/appdata}"
 LAN_IP="${LAN_IP:-}"
+DOMAIN="${DOMAIN:-}"
 
 # Services that must be running and healthy for a full run (R2.1).
 CORE=(sabnzbd prowlarr sonarr sonarr-anime sonarr-4k radarr radarr-4k lidarr plex seerr tautulli)
@@ -61,7 +62,8 @@ fields in the apps' responses are ignored).
 
 SAB part (first, and the only part with --only sab):
   download_dir=$SAB_DOWNLOAD_DIR, complete_dir=$SAB_COMPLETE_DIR;
-  host_whitelist += sabnzbd,<hostname -s>,\$LAN_IP (merged, deduplicated);
+  host_whitelist += sabnzbd,<hostname -s>,\$LAN_IP and, when DOMAIN is set
+  and not example.com, sabnzbd.int.\$DOMAIN (merged, deduplicated);
   categories ${SAB_CATS[*]} (dir = name); delete ${SAB_OLD_CATS[*]};
   purge queue/history jobs older than .migration/baseline.json "created";
   --only sab: pause the queue, so nothing downloads before the wiring.
@@ -93,6 +95,7 @@ Options:
 Environment variables (defaults; normally from .env):
   APPDATA_ROOT=$APPDATA_ROOT   (API keys are read from here at runtime)
   LAN_IP=${LAN_IP:-<unset>}
+  DOMAIN=${DOMAIN:-<unset>}   (adds sabnzbd.int.<DOMAIN> to the SAB whitelist)
 EOF
 }
 
@@ -129,6 +132,11 @@ if [[ "$LAN_IP" == 0.0.0.0 || "$LAN_IP" == 255.255.255.255 ]]; then
 fi
 require_cmd docker curl jq hostname
 HOST_S="$(hostname -s)"
+SAB_ADD="sabnzbd,$HOST_S,$LAN_IP"
+if [[ -n "$DOMAIN" && "$DOMAIN" != example.com ]]; then
+  require_match DOMAIN "$DOMAIN" '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$' "a DNS domain name"
+  SAB_ADD+=",sabnzbd.int.$DOMAIN"
+fi
 require_match hostname "$HOST_S" '^[A-Za-z0-9][A-Za-z0-9-]*$' "a short host name"
 
 # --- preconditions ---------------------------------------------------------------
@@ -185,7 +193,7 @@ sab_part() {
   # 2. host_whitelist: current entries, then sabnzbd,<host>,<LAN_IP>;
   #    trimmed, deduplicated, order kept.
   # Two lines out: the current list, normalized, then the merged list.
-  { IFS= read -r current; IFS= read -r merged; } < <(jq -r --arg add "sabnzbd,$HOST_S,$LAN_IP" '
+  { IFS= read -r current; IFS= read -r merged; } < <(jq -r --arg add "$SAB_ADD" '
     def entries: (if type == "array" then join(",") else tostring end)
                  | split(",") | map(sub("^\\s+"; "") | sub("\\s+$"; "")) | map(select(length > 0));
     (.config.misc.host_whitelist // "" | entries) as $cur

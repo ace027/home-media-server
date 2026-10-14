@@ -83,11 +83,9 @@ Plan on a few hours: the Plex rescans (step 6) and the test downloads
   cd /opt/home-media-server
   git checkout dev && git pull
   ```
-  Edit `.env`: set `LAN_IP=192.168.50.16` and uncomment the line
-  `COMPOSE_FILE=compose.yaml:compose.lan.yaml`, which publishes the admin
-  UIs on the LAN until Phase 3. `LAN_IP` must be the VM's own LAN
-  address, never `0.0.0.0`: the admin UIs bind only to it, and
-  `25-arr-wire.sh` adds it to SABnzbd's host whitelist (it stops with
+  Edit `.env`: set `LAN_IP=192.168.50.16`. `LAN_IP` must be the VM's own
+  LAN address, never `0.0.0.0`: `25-arr-wire.sh` adds it to SABnzbd's host
+  whitelist (it stops with
   `invalid LAN_IP '0.0.0.0': LAN_IP must be the VM's own LAN address`).
   Then check the config and pull the images (this only downloads;
   nothing starts):
@@ -490,8 +488,8 @@ explicit HD request can still add an HD copy. Series with both 4K and
 non-4K episodes are never moved; you decide on each one.
 
 1. **Confirm the 4K quality profile names.** Open Radarr 4K
-   (`http://192.168.50.16:7879`) and Sonarr 4K
-   (`http://192.168.50.16:8991`), Settings → Profiles. The script uses
+   (`https://radarr-4k.int.<domain>`) and Sonarr 4K
+   (`https://sonarr-4k.int.<domain>`), Settings → Profiles. The script uses
    `Ultra-HD` in both. If you want another profile, add
    `QP_4K_RADARR=<name>` and/or `QP_4K_SONARR=<name>` to `.env`. A name
    that doesn't exist stops the script and lists the real ones:
@@ -692,7 +690,7 @@ the trash is what would lose watch state.
 
 ## 7. Seerr and Tautulli
 
-Open Seerr at `http://192.168.50.16:5055` and sign in as the owner. Use
+Open Seerr at `https://requests.<domain>` and sign in as the owner. Use
 the service **host names** below everywhere, never IP addresses: container
 IPs change on every restart.
 
@@ -731,7 +729,7 @@ For an **anime** request: Requests → open it → edit (pencil) → Server
 `Sonarr Anime`, root `/data/media/anime-tv`, your anime profile → Save →
 Approve. Approve other TV requests as they are.
 
-**Tautulli** (`http://192.168.50.16:8181`): Settings → Plex Media Server →
+**Tautulli** (`https://tautulli.int.<domain>`): Settings → Plex Media Server →
 address `plex`, port `32400`, SSL off → Verify Server → Save.
 
 Run `scripts/vm/verify-media.sh` again: `seerr-servers` now PASSes.
@@ -744,7 +742,7 @@ Jellyfin is an evaluation only, off by default. To try it:
 docker compose --profile jellyfin up -d jellyfin
 ```
 
-Open `http://192.168.50.16:8096` and finish the wizard. Add libraries on
+Open `https://jellyfin.int.<domain>` and finish the wizard. Add libraries on
 the same folders as Plex (`/data/media/movies`, `/data/media/tv`, ...).
 They are mounted **read-only**, so leave "Save artwork into media folders"
 and NFO saving off. Under Dashboard → Playback → Transcoding, choose Intel
@@ -759,31 +757,15 @@ docker compose --profile jellyfin stop jellyfin
 
 ## 9. Remote admin access
 
-The admin UIs are published only on `192.168.50.16` (by
-`compose.lan.yaml`). Reach them from outside the LAN through Twingate: in
-the Twingate admin console, add a Resource on the Remote Network served by
-the connector (LXC 101 on the Proxmox host):
+The admin UIs publish no ports. Once the edge from runbook 04 is running,
+each one is at `https://<service>.int.<domain>/` (for example
+`https://sonarr.int.<domain>/`) from the LAN or over Twingate, behind
+Authentik. Set up the Twingate resource (`*.int.<domain>`), certificates and
+Authentik in runbook 04, sections 1 to 6.
 
-- Address: `192.168.50.16`
-- Ports: TCP `5055, 7878, 7879, 8080, 8181, 8686, 8989, 8990, 8991, 9696`
-  (add `8096` if you evaluate Jellyfin)
-- Access: your admin group only
-
-| Port | App |
-|---|---|
-| 5055 | Seerr |
-| 7878 / 7879 | Radarr / Radarr 4K |
-| 8080 | SABnzbd |
-| 8181 | Tautulli |
-| 8686 | Lidarr |
-| 8989 / 8990 / 8991 | Sonarr / Sonarr Anime / Sonarr 4K |
-| 9696 | Prowlarr |
-| 8096 | Jellyfin (optional) |
-
-Test it from a phone off Wi-Fi with Twingate connected:
-`http://192.168.50.16:5055`. These ports are temporary: Phase 3 removes
-`compose.lan.yaml` and the `COMPOSE_FILE` line, and the UIs move behind
-Traefik and Authentik. Plex's `32400` stays published.
+The steps in this runbook that open an admin UI use these `*.int` names, so
+set up runbook 04 sections 1 to 6 first if you have not. Plex's `32400`
+stays published.
 
 ## 10. Test requests and verify
 

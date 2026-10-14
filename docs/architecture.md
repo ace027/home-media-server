@@ -112,21 +112,17 @@ Ports 80 and 81 stay closed because certificates are issued via Cloudflare DNS-0
 
 Plex's `32400` is the only port the stack files publish, and the only permanent one. Every other service is reached by service name on `proxy` (e.g. `http://sabnzbd:8080`).
 
-**Temporary admin ports (Phase 2 only).** Until Phase 3's Traefik exists, `compose.lan.yaml` publishes the admin UIs on the VM's LAN IP so the owner can reach them over Twingate (the connector in LXC 101 reaches LAN IPs, not Docker bridge IPs). It is enabled by uncommenting `COMPOSE_FILE=compose.yaml:compose.lan.yaml` in `.env`. Every port binds only to `${LAN_IP}`, never to `0.0.0.0`, and Compose refuses to render the override if `LAN_IP` is unset. Phase 3 deletes `compose.lan.yaml` and the `COMPOSE_FILE` line.
+Admin UIs publish no ports at all: they are reached only as `<service>.int.<domain>`, through Twingate, Traefik's `lan-only` allowlist and Authentik forward-auth (see runbook 04).
 
-| Service | LAN_IP host port → container port |
-|---------|-----------------------------------|
-| sabnzbd | 8080 → 8080 |
-| prowlarr | 9696 → 9696 |
-| sonarr | 8989 → 8989 |
-| sonarr-anime | 8990 → 8989 |
-| sonarr-4k | 8991 → 8989 |
-| radarr | 7878 → 7878 |
-| radarr-4k | 7879 → 7878 |
-| lidarr | 8686 → 8686 |
-| seerr | 5055 → 5055 |
-| tautulli | 8181 → 8181 |
-| jellyfin *(only with `--profile jellyfin`)* | 8096 → 8096 |
+Traefik applies three middleware chains, defined once as labels on the `traefik` service:
+
+| Chain | Middlewares | Used by |
+|-------|-------------|---------|
+| `int` | `lan-only`, `secure-headers`, `authentik` | Every `*.int.<domain>` route and the Traefik dashboard |
+| `lan-admin` | `lan-only`, `secure-headers` | Authentik's own `/if/admin` (no forward-auth, or it would protect itself) |
+| `public` | `crowdsec`, `geoblock`, `rate-limit`, `secure-headers` | The internet-facing routes: Seerr, Authentik login, and Jellyfin if adopted |
+
+The CrowdSec engine runs on its own `crowdsec` network, shared only with Traefik's bouncer plugin, and reads Traefik's access log. The geo-block admits only `GEO_ALLOWED_COUNTRIES` (private addresses always pass). Plex is not behind Traefik: `32400/tcp` is forwarded straight to Plex, which is the only exposure besides 443.
 
 ## Service template
 New services extend the shared `base` template from `stacks/_common.yaml` instead of repeating `restart`, `security_opt`, `environment`, `dns` and `logging` on every service. The template sets the container DNS servers (`DNS_PRIMARY` / `DNS_SECONDARY` in `.env`, default `1.1.1.1` and `8.8.8.8`): Docker's built-in DNS forwards to the VM's `resolv.conf` list, and a slow or dead first entry made lookups time out inside containers:

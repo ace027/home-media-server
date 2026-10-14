@@ -109,4 +109,42 @@ else
   secure_dir "$APPDATA_ROOT"
 fi
 
+# Edge appdata (Phase 3): Traefik, Authentik and CrowdSec state. Components
+# are walked like DATA_ROOT's so every new parent directory gets the same
+# treatment. traefik/acme holds the certificate key: mode 0700.
+EDGE_DIRS=(
+  "traefik/acme"
+  "traefik/logs"
+  "traefik/plugins-storage"
+  "authentik/media"
+  "authentik/templates"
+  "authentik/db"
+  "crowdsec/data"
+  "crowdsec/config"
+)
+
+for entry in "${EDGE_DIRS[@]}"; do
+  path="$APPDATA_ROOT/$entry"
+  if [[ -d "$path" ]]; then
+    existing=$((existing + 1))
+  else
+    new_components=()
+    component="$APPDATA_ROOT"
+    IFS='/' read -r -a parts <<< "$entry"
+    for part in "${parts[@]}"; do
+      component="$component/$part"
+      [[ -d "$component" ]] || new_components+=("$component")
+    done
+    mkdir -p "$path"
+    created=$((created + 1))
+    log_info "created $path"
+    for component in "${new_components[@]}"; do
+      secure_dir "$component"
+    done
+  fi
+  if [[ "$entry" == "traefik/acme" ]]; then
+    chmod 0700 "$path"
+  fi
+done
+
 log_info "created $created, existing $existing"
