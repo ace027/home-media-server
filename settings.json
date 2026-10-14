@@ -1,8 +1,8 @@
 {
   "models": {
-    "planning": "sonnet",
-    "execution": "sonnet",
-    "check": "sonnet",
+    "planning": "claude-sonnet-5-5",
+    "execution": "claude-sonnet-5-5",
+    "check": "claude-sonnet-5-5",
     "planning_reasoning": false
   }
 }
