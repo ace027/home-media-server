@@ -8,3 +8,6 @@ secrets/*
 _inspect.json
 _compose-resolved.yml
 *.tar.zst
+
+# Triad per-session spend tracker (rewritten every turn)
+.planning/SPEND.json
