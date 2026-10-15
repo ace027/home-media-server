@@ -4,5 +4,6 @@
 - [`runbooks/01-proxmox-host.md`](runbooks/01-proxmox-host.md) — BIOS, ZFS datasets, IOMMU/vfio, directory mapping and VM creation on the Proxmox host.
 - [`runbooks/02-vm-bootstrap.md`](runbooks/02-vm-bootstrap.md) — Debian 13 install, bootstrap script, data tree and verification inside the VM.
 - [`runbooks/03-core-media.md`](runbooks/03-core-media.md) — Phase 2 cutover: restore the old app configs, remap and wire SABnzbd, the *arr apps and Prowlarr, split out 4K titles, set up Plex and Seerr, and the acceptance run.
+- [`runbooks/04-edge-access.md`](runbooks/04-edge-access.md) — Phase 3: Cloudflare tokens and DNS, edge secrets, router forwards, Traefik wildcard certificates, Twingate `*.int` access (Authentik, CrowdSec and LAN-port removal are added by later plans).
 
 Phase 5 adds more runbooks here (backup/restore drills and observability setup).

@@ -1,0 +1,88 @@
+# Authentik blueprint (plan 03-02): domain-level forward-auth for every *.int admin UI.
+# Mounted read-only at /blueprints/custom; Authentik applies it on start and on change.
+# Written against ghcr.io/goauthentik/server:2026.8.3. No secrets in this file;
+# DOMAIN comes from the container environment (stacks/edge.yaml).
+#
+# Traefik's `authentik` forwardauth middleware (in the int@docker chain) asks the
+# embedded outpost at authentik-server:9000/outpost.goauthentik.io/auth/traefik.
+# forward_domain mode: one provider and one session cookie on ${DOMAIN} cover every
+# <service>.int.${DOMAIN}; logins happen at https://auth.${DOMAIN}.
+# Only members of `admins` may use the application (group binding below); Authentik
+# denies everyone else, and admins must pass MFA (10-admins-mfa.yaml).
+#
+# The embedded outpost's provider list and config are owned by this blueprint: a
+# provider added to it by hand in the UI is removed on the next apply. Add providers here.
+version: 1
+metadata:
+  name: Home media - admin UI forward-auth
+  labels:
+    blueprints.goauthentik.io/description: int-forward-auth proxy provider, admin-uis application, embedded outpost
+entries:
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider authorization flow (implicit consent)
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider invalidation flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Home media - admins group and admin MFA
+      required: true
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: int-forward-auth
+    state: present
+    identifiers:
+      name: int-forward-auth
+    attrs:
+      mode: forward_domain
+      external_host: !Format ["https://auth.%s", !Env DOMAIN]
+      cookie_domain: !Env DOMAIN
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      # A session lasts at most 12 hours before Authentik asks again.
+      access_token_validity: hours=12
+      intercept_header_auth: true
+
+  - model: authentik_core.application
+    id: admin-uis
+    state: present
+    identifiers:
+      slug: admin-uis
+    attrs:
+      name: Admin UIs
+      provider: !KeyOf int-forward-auth
+      meta_launch_url: blank://blank
+      meta_description: Every *.int admin UI (Sonarr, Radarr, SABnzbd, Traefik, ...) behind forward-auth
+      # Deny unless a binding passes: only the admins group binding below exists.
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      order: 0
+      target: !KeyOf admin-uis
+      group: !Find [authentik_core.group, [name, admins]]
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+
+  - model: authentik_outposts.outpost
+    state: present
+    identifiers:
+      managed: goauthentik.io/outposts/embedded
+    attrs:
+      providers:
+        - !KeyOf int-forward-auth
+      # Without authentik_host the outpost sends browsers to http://localhost/application/o/authorize/
+      # (seen on 2026.8.3). Unset keys keep their defaults.
+      config:
+        authentik_host: !Format ["https://auth.%s", !Env DOMAIN]
+        authentik_host_insecure: false
+        log_level: info

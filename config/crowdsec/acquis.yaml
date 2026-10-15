@@ -1,0 +1,6 @@
+# CrowdSec log source: Traefik's JSON access log (written by the traefik service,
+# mounted read-only into the crowdsec container).
+filenames:
+  - /var/log/traefik/access.log
+labels:
+  type: traefik

@@ -1,0 +1,204 @@
+# Authentik blueprint (plan 03-02): invitation-only enrollment flow.
+# Mounted read-only at /blueprints/custom; Authentik applies it on start and on change.
+# Written against ghcr.io/goauthentik/server:2026.8.3. No secrets in this file.
+#
+# Defined explicitly (modelled on the shipped example
+# /blueprints/example/flows-invitation-enrollment-minimal.yaml) rather than applying
+# the full example, which also creates sample groups and invitations.
+# The invitation stage is first and continue_flow_without_invitation is false, so the
+# flow stops for anyone without a valid invitation. Invitations are created by an
+# admin (runbook 04, section 6); family onboarding uses them in Phase 6.
+# New users are `external` (no Authentik user interface, no admin group) and land
+# under the users/invited path.
+version: 1
+metadata:
+  name: Home media - invitation enrollment
+  labels:
+    blueprints.goauthentik.io/description: Enrollment flow that requires a valid invitation
+entries:
+  - model: authentik_flows.flow
+    id: flow
+    state: present
+    identifiers:
+      slug: invitation-enrollment
+    attrs:
+      name: Invitation enrollment
+      title: Create your account
+      designation: enrollment
+      authentication: require_unauthenticated
+
+  - model: authentik_stages_invitation.invitationstage
+    id: invitation-stage
+    state: present
+    identifiers:
+      name: invitation-enrollment-invitation
+    attrs:
+      continue_flow_without_invitation: false
+
+  - model: authentik_stages_prompt.prompt
+    id: field-username
+    state: present
+    identifiers:
+      name: invitation-enrollment-field-username
+    attrs:
+      field_key: username
+      label: Username
+      type: username
+      required: true
+      placeholder: Username
+      placeholder_expression: false
+      order: 0
+
+  - model: authentik_stages_prompt.prompt
+    id: field-password
+    state: present
+    identifiers:
+      name: invitation-enrollment-field-password
+    attrs:
+      field_key: password
+      label: Password
+      type: password
+      required: true
+      placeholder: Password
+      placeholder_expression: false
+      order: 1
+
+  - model: authentik_stages_prompt.prompt
+    id: field-password-repeat
+    state: present
+    identifiers:
+      name: invitation-enrollment-field-password-repeat
+    attrs:
+      field_key: password_repeat
+      label: Password (repeat)
+      type: password
+      required: true
+      placeholder: Password (repeat)
+      placeholder_expression: false
+      order: 2
+
+  - model: authentik_stages_prompt.prompt
+    id: field-name
+    state: present
+    identifiers:
+      name: invitation-enrollment-field-name
+    attrs:
+      field_key: name
+      label: Name
+      type: text
+      required: true
+      placeholder: Name
+      placeholder_expression: false
+      order: 0
+
+  - model: authentik_stages_prompt.prompt
+    id: field-email
+    state: present
+    identifiers:
+      name: invitation-enrollment-field-email
+    attrs:
+      field_key: email
+      label: Email
+      type: email
+      required: true
+      placeholder: Email
+      placeholder_expression: false
+      order: 1
+
+  # Password rules for invited accounts: at least 12 characters, not in a known breach,
+  # and zxcvbn_score_threshold 2. Authentik fails the policy when the zxcvbn score is
+  # equal to or less than the threshold (authentik/policies/password/models.py), so
+  # scores 3 and 4 (of 4) pass. The Have I Been Pwned check uses k-anonymity (only the
+  # first 5 characters of the password's SHA-1 leave the server) and needs egress from
+  # authentik-server to api.pwnedpasswords.com.
+  - model: authentik_policies_password.passwordpolicy
+    id: password-policy
+    state: present
+    identifiers:
+      name: invitation-enrollment-password-policy
+    attrs:
+      password_field: password
+      length_min: 12
+      amount_digits: 0
+      amount_uppercase: 0
+      amount_lowercase: 0
+      amount_symbols: 0
+      check_static_rules: true
+      check_have_i_been_pwned: true
+      hibp_allowed_count: 0
+      check_zxcvbn: true
+      zxcvbn_score_threshold: 2
+      error_message: Use at least 12 characters, not a common or leaked password.
+
+  - model: authentik_stages_prompt.promptstage
+    id: prompt-credentials
+    state: present
+    identifiers:
+      name: invitation-enrollment-prompt-credentials
+    attrs:
+      fields:
+        - !KeyOf field-username
+        - !KeyOf field-password
+        - !KeyOf field-password-repeat
+      validation_policies:
+        - !KeyOf password-policy
+
+  - model: authentik_stages_prompt.promptstage
+    id: prompt-details
+    state: present
+    identifiers:
+      name: invitation-enrollment-prompt-details
+    attrs:
+      fields:
+        - !KeyOf field-name
+        - !KeyOf field-email
+
+  - model: authentik_stages_user_write.userwritestage
+    id: user-write
+    state: present
+    identifiers:
+      name: invitation-enrollment-user-write
+    attrs:
+      user_creation_mode: always_create
+      user_type: external
+      user_path_template: users/invited
+
+  - model: authentik_stages_user_login.userloginstage
+    id: user-login
+    state: present
+    identifiers:
+      name: invitation-enrollment-user-login
+
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf invitation-stage
+      order: 5
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: true
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf prompt-credentials
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf prompt-details
+      order: 15
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf user-write
+      order: 20
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf user-login
+      order: 100

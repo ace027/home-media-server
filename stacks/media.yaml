@@ -44,6 +44,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.seerr.rule=Host(`requests.${DOMAIN}`)
+      - traefik.http.routers.seerr.middlewares=public@docker
+      - traefik.http.services.seerr.loadbalancer.server.port=5055
 
   tautulli:
     extends:
@@ -60,6 +65,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.tautulli.rule=Host(`tautulli.int.${DOMAIN}`)
+      - traefik.http.routers.tautulli.middlewares=int@docker
+      - traefik.http.services.tautulli.loadbalancer.server.port=8181
 
   jellyfin:
     extends:
@@ -81,6 +91,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.jellyfin.rule=Host(`jellyfin.int.${DOMAIN}`)
+      - traefik.http.routers.jellyfin.middlewares=int@docker
+      - traefik.http.services.jellyfin.loadbalancer.server.port=8096
 
 networks:
   proxy:

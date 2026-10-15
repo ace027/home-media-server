@@ -1,0 +1,96 @@
+# Authentik blueprint (plan 03-02): the `admins` group and admin-only MFA.
+# Mounted read-only at /blueprints/custom; Authentik applies it on start and on change.
+# Written against ghcr.io/goauthentik/server:2026.8.3. No secrets in this file.
+#
+# The default authentication flow (slug default-authentication-flow) already has an
+# MFA validation stage at order 30. This blueprint:
+#   - makes that stage demand TOTP or WebAuthn and, when the user has neither,
+#     walk them through enrolling one (not_configured_action: configure);
+#   - gates the stage binding with `admins-only-mfa`, so only members of `admins`
+#     (and superusers such as akadmin) get the stage. Everyone else is unaffected.
+# policy_engine_mode `all`: the shipped "skip after passwordless WebAuthn" policy
+# and admins-only-mfa must both pass for the stage to run.
+version: 1
+metadata:
+  name: Home media - admins group and admin MFA
+  labels:
+    blueprints.goauthentik.io/description: admins group; TOTP or WebAuthn required for admins and superusers
+entries:
+  # Make sure the shipped objects this blueprint edits exist first.
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Authentication flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - TOTP MFA setup flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - WebAuthn MFA setup flow
+      required: true
+
+  - model: authentik_core.group
+    id: admins
+    state: present
+    identifiers:
+      name: admins
+    attrs:
+      is_superuser: false
+
+  - model: authentik_policies_expression.expressionpolicy
+    id: admins-only-mfa
+    state: present
+    identifiers:
+      name: admins-only-mfa
+    attrs:
+      # Evaluated when the stage is reached (re_evaluate_policies), after identification:
+      # the flow planner puts the flow context, including pending_user, into
+      # request.context (authentik/flows/markers.py, ReevaluateMarker).
+      expression: |
+        user = request.context.get("pending_user") or request.user
+        if not user or not user.is_authenticated:
+            return False
+        return user.is_superuser or ak_is_group_member(user, name="admins")
+
+  - model: authentik_stages_authenticator_validate.authenticatorvalidatestage
+    id: mfa-validation
+    state: present
+    identifiers:
+      name: default-authentication-mfa-validation
+    attrs:
+      not_configured_action: configure
+      device_classes:
+        - totp
+        - webauthn
+      configuration_stages:
+        - !Find [authentik_stages_authenticator_totp.authenticatortotpstage, [name, default-authenticator-totp-setup]]
+        - !Find [authentik_stages_authenticator_webauthn.authenticatorwebauthnstage, [name, default-authenticator-webauthn-setup]]
+
+  - model: authentik_flows.flowstagebinding
+    id: mfa-binding
+    state: present
+    identifiers:
+      order: 30
+      stage: !KeyOf mfa-validation
+      target: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+      policy_engine_mode: all
+
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      order: 20
+      target: !KeyOf mfa-binding
+      policy: !KeyOf admins-only-mfa
+    attrs:
+      enabled: true
+      negate: false
+      # An error in the policy must not drop MFA for an admin: fail towards MFA.
+      failure_result: true
+      timeout: 30

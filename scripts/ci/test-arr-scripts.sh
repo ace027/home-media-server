@@ -75,7 +75,7 @@ no_secrets() {
 export PATH="$T/bin:$PATH"
 
 # --- synthetic appdata, data tree and baseline -----------------------------------
-export APPDATA_ROOT="$T/appdata" DATA_ROOT="$T/data" LAN_IP=192.168.50.16
+export APPDATA_ROOT="$T/appdata" DATA_ROOT="$T/data" LAN_IP=192.168.50.16 DOMAIN=example.com
 export WAIT_INTERVAL=0 WAIT_TIMEOUT=5
 for s in sonarr sonarr-anime sonarr-4k radarr radarr-4k lidarr prowlarr; do
   mkdir -p "$APPDATA_ROOT/$s"
@@ -482,6 +482,15 @@ no_secrets wire-sab-apply "$OUT"
 run_capture env STUB_RUNNING="" "$WIRE" --only sab
 expect wire-sab-precondition 1 'sabnzbd is not running'
 ok "wire --only sab: dirs, whitelist, categories as DRY-RUN only; --apply ends with mode=pause"
+
+# 7a. With a real DOMAIN, sabnzbd.int.<DOMAIN> joins the whitelist exactly once.
+use_fixtures initial
+run_capture env STUB_RUNNING="sabnzbd" DOMAIN=media.test "$WIRE" --only sab
+expect wire-sab-domain 0 \
+  "^DRY-RUN: GET sabnzbd /api\\?mode=set_config&output=json&section=misc&keyword=host_whitelist&value=oldvm.lan%2Coldvm%2Csabnzbd%2C$HOST_S%2C192.168.50.16%2Csabnzbd.int.media.test\$"
+[[ "$(grep -o 'sabnzbd\.int\.media\.test' <<<"$OUT" | wc -l)" -eq 1 ]] || fail wire-sab-domain "sabnzbd.int.media.test not present exactly once"
+refute wire-sab-domain 'sabnzbd\.int\.example\.com'
+ok "wire adds sabnzbd.int.<DOMAIN> to host_whitelist once; example.com adds nothing"
 
 # 7b. Pre-baseline jobs are purged; newer ones and a missing baseline are not.
 use_fixtures initial

@@ -1,0 +1,6 @@
+# Traefik file-provider TLS options (watched; no restart needed).
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      sniStrict: true

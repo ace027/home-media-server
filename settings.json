@@ -4,5 +4,8 @@
     "execution": "sonnet",
     "check": "sonnet",
     "planning_reasoning": false
+  },
+  "integrations": {
+    "github": "enabled"
   }
 }

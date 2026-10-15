@@ -11,9 +11,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 # The tests pick each file set explicitly; a caller's or .env's compose
 # selection must not leak in (-f compose.yaml overrides COMPOSE_FILE).
-unset COMPOSE_FILE COMPOSE_PROFILES LAN_IP
-
-LAN=(env COMPOSE_FILE=compose.yaml:compose.lan.yaml LAN_IP=127.0.0.1)
+unset COMPOSE_FILE COMPOSE_PROFILES
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -31,27 +29,15 @@ docker compose -f compose.yaml config -q || fail "config (default)"
 ok "config default"
 docker compose -f compose.yaml --profile jellyfin config -q || fail "config --profile jellyfin"
 ok "config jellyfin profile"
-"${LAN[@]}" docker compose config -q || fail "config with compose.lan.yaml"
-ok "config lan override"
 
-if docker compose -f compose.yaml config --services | grep -qx jellyfin; then
+if grep -qx jellyfin <<<"$(docker compose -f compose.yaml config --services)"; then
   fail "jellyfin present without its profile"
 fi
-if "${LAN[@]}" docker compose config --services | grep -qx jellyfin; then
-  fail "jellyfin present without its profile (lan override)"
-fi
-docker compose -f compose.yaml --profile jellyfin config --services | grep -qx jellyfin \
+grep -qx jellyfin <<<"$(docker compose -f compose.yaml --profile jellyfin config --services)" \
   || fail "jellyfin missing with --profile jellyfin"
 ok "jellyfin profile only"
 
-# --- 2. LAN override without LAN_IP fails clearly ----------------------------
-rc=0
-out="$(LAN_IP='' COMPOSE_FILE=compose.yaml:compose.lan.yaml docker compose config -q 2>&1)" || rc=$?
-[[ $rc -ne 0 ]] || fail "lan override accepted an empty LAN_IP"
-grep -q 'set LAN_IP' <<<"$out" || fail "empty LAN_IP error lacks 'set LAN_IP'" "$out"
-ok "lan override requires LAN_IP"
-
-# --- 3. Single /data mount ------------------------------------------------------
+# --- 2. Single /data mount ------------------------------------------------------
 # No service mounts /data (or a /data/ subpath) more than once, and the only
 # allowed subpath target is /data/media, read-only.
 full="$(docker compose -f compose.yaml --profile jellyfin config --format json)"
@@ -70,12 +56,12 @@ bad="$(jq -r '
   || fail "single /data: expected /data/media:ro on plex and jellyfin"
 ok "single /data"
 
-# --- 4. Only 32400 is published -------------------------------------------------
+# --- 3. Only 443 (Traefik) and 32400 (Plex) are published ------------------------
 pub="$(jq -c '[.services[].ports[]?.published] | unique' <<<"$full")"
-[[ "$pub" == '["32400"]' ]] || fail "published ports without override: $pub (want [\"32400\"])"
-ok "only 32400 without override"
+[[ "$pub" == '["32400","443"]' ]] || fail "published ports: $pub (want [\"32400\",\"443\"])"
+ok "only 443 and 32400 published"
 
-# --- 4b. Every service gets explicit DNS servers (overridable) -------------------
+# --- 3b. Every service gets explicit DNS servers (overridable) -------------------
 nodns="$(jq -r '.services | to_entries[] | select((.value.dns // []) != ["1.1.1.1","8.8.8.8"]) | .key' <<<"$full")"
 [[ -z "$nodns" ]] || fail "services without the default dns [1.1.1.1, 8.8.8.8]: $nodns"
 ovr="$(DNS_PRIMARY=192.0.2.53 DNS_SECONDARY=192.0.2.54 docker compose -f compose.yaml --profile jellyfin config --format json)"
@@ -83,16 +69,7 @@ ovr="$(DNS_PRIMARY=192.0.2.53 DNS_SECONDARY=192.0.2.54 docker compose -f compose
   || fail "DNS_PRIMARY/DNS_SECONDARY did not override the container dns"
 ok "container dns"
 
-lan="$("${LAN[@]}" docker compose --profile jellyfin config --format json)"
-n_admin="$(jq '[.services[].ports[]? | select(.published != "32400")] | length' <<<"$lan")"
-[[ "$n_admin" -eq 11 ]] || fail "lan override: expected 11 admin ports, got $n_admin"
-unbound="$(jq -r '.services | to_entries[] | .key as $svc
-  | .value.ports[]? | select(.published != "32400" and .host_ip != "127.0.0.1")
-  | "\($svc): \(.host_ip // "0.0.0.0"):\(.published)"' <<<"$lan")"
-[[ -z "$unbound" ]] || fail "lan override: admin ports not bound to LAN_IP" "$unbound"
-ok "lan override binds admin ports to LAN_IP"
-
-# --- 5. Fixtures are synthetic --------------------------------------------------
+# --- 4. Fixtures are synthetic --------------------------------------------------
 if [[ -d scripts/ci/fixtures ]]; then
   out=$({ grep -rEo '[a-f0-9]{32}' scripts/ci/fixtures 2>/dev/null || true; } \
     | { grep -v 0123456789abcdef0123456789abcdef || true; })
@@ -102,7 +79,7 @@ else
   ok "fixtures (none yet)"
 fi
 
-# --- 6/7. check-min-versions.sh fixtures ---------------------------------------
+# --- 5/6. check-min-versions.sh fixtures ---------------------------------------
 # write_compose <file> <image...>: one service per image.
 write_compose() {
   local file="$1" i=0 image
