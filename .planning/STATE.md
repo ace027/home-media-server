@@ -11,6 +11,7 @@
 ```
 
 ## Recent Decisions
+- 2026-11-13: Dolby Vision titles are kept: FileFlows re-encodes them to 10-bit HEVC on the A380 with the DV RPU extracted and re-injected via `dovi_tool` (P7 converted to 8.1, P5 skipped, low-bitrate files skipped); everything else goes to AV1. Replaces "DV dropped" in R8. Phase 4 adds `dovi_tool` and `mkvmerge` to FileFlows and a 2-3 title DV validation before the library run
 - Execution mode: Guided
 - Planning depth: Standard
 - Cost profile: Balanced

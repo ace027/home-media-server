@@ -23,8 +23,9 @@ Family members request a title in one place, it appears automatically at the rig
 - [ ] **R5 Media:** Plex (Plex Pass, QSV hardware transcoding, remote access on 32400, remote quality set to Original with an overall cap of about 400 Mbps), Jellyfin as an **optional evaluation** only (QSV, same libraries read-only, off by default behind a Compose profile, started on demand to test whether it could replace Plex), Seerr (Plex login; 4K requests go to the 4K instances and need admin approval; TV requests need admin approval so anime can be routed to Sonarr-Anime), Tautulli. 4K titles live only in separate **Movies 4K** and **TV 4K** Plex libraries, shared with every family member (non-4K devices get an HDR-tone-mapped transcode).
 - [ ] **R6 Edge:** Traefik v3 with wildcard certificates via Cloudflare DNS-01, `cloudflare-ddns` for the dynamic IP (DNS-only records), Authentik (invites, admin MFA; OIDC and a public route for Jellyfin only if it is adopted after evaluation), CrowdSec bouncer, geo-block, secure headers. Only ports 443 and 32400 are forwarded.
 - [ ] **R7 Private admin:** Twingate connector in a **separate LXC**, reusing the existing Twingate network. (In place: LXC 101 on the Proxmox host, deployed with the community-scripts twingate-connector script, confirmed working 2026-09-28.) Admin UIs live under `*.int.<domain>` behind the `lan-only` ipAllowList plus Authentik forward-auth.
-- [ ] **R8 AV1 transcode:** FileFlows server and GPU node, QSV AV1, running 01:00-07:00 with 1 runner, covering all libraries including 4K.
-  - 4K is 10-bit and keeps HDR10. Dolby Vision profile 7/8 files lose the DV layer; profile 5 files are skipped.
+- [ ] **R8 AV1 transcode:** FileFlows server and GPU node on the A380 (QSV), running 01:00-07:00 with 1 runner, covering all libraries including 4K.
+  - HD and 4K HDR10 titles (no Dolby Vision) are encoded to AV1. 4K output is 10-bit and keeps HDR10 (mastering display, MaxCLL/MaxFALL).
+  - Dolby Vision titles are re-encoded to 10-bit HEVC (QSV) with DV kept, not to AV1: the DV RPU is extracted with `dovi_tool` before the encode, injected back after it, and the result is remuxed with `mkvmerge` (audio and subtitles kept). Profile 8.1 keeps its RPU as is; profile 7 is converted to 8.1 (MEL loses nothing, FEL loses its enhancement layer); profile 5 files are skipped. Low-bitrate DV files (e.g. web releases) are skipped. Output must keep the source frame count and show DV 8.1 plus HDR10 (`dovi_tool info`, ffprobe/MediaInfo).
   - A converted file is kept only if it's at least 15-20% smaller, and each replacement triggers a rescan in the *arr apps and Plex (and Jellyfin when it is running).
 - [ ] **R9 Quality automation:** Recyclarr (TRaSH HD, 4K and anime profiles; AV1 and DV custom-format scores set to 0; DV without HDR10 fallback blocked), Bazarr (HD), Maintainerr (dry-run first).
 - [ ] **R10 Monitoring & alerts:** Homepage, Uptime Kuma, Notifiarr/Discord webhooks, Dozzle, Diun update notifications.
@@ -38,7 +39,8 @@ Family members request a title in one place, it appears automatically at the rig
 - Kubernetes or multi-node HA
 - Streaming media through a Cloudflare proxy or Tunnel
 - Live TV/DVR
-- Preserving Dolby Vision
+- Dolby Vision in AV1 (profile 10): DV titles stay HEVC instead
+- Keeping the profile 7 full enhancement layer (FEL) when re-encoding DV titles
 - Off-site backup of the media files themselves (they can be re-acquired from the *arr databases)
 
 ## Constraints
@@ -72,7 +74,8 @@ Family members request a title in one place, it appears automatically at the rig
 | Anime routing (2026-09-28) | Seerr can't auto-route anime to a separate Sonarr (override rules only set profile/root/tags) | TV requests need admin approval; the owner switches anime requests to Sonarr-Anime while pending. Movies stay auto-approved; 4K always needs approval |
 | Phase 2 approach (2026-09-28) | Restore live state safely, once | Pragmatic: restore old configs (not rebuild), remap paths via each app's API, scripted wiring/4K split/verification, owner UI for Plex/Seerr. Spec: `.planning/specs/02-core-media-automation-spec.md` |
 | Old stack migration | Old server ran qBittorrent+gluetun+flaresolverr, NZBGet, a separate animesonarr, and a Twingate connector | Usenet only (retire torrents and NZBGet); keep a separate anime Sonarr; Twingate connector moves to a separate LXC. See `.planning/migration/old-stack-inventory.md` |
-| AV1 | Save space; family devices support AV1 | FileFlows on all libraries including 4K; HDR10 kept, DV dropped |
+| AV1 | Save space; family devices support AV1 | FileFlows on all libraries including 4K; HDR10 kept |
+| Dolby Vision (2026-11-13) | Keep DV on 4K DV titles; DV in AV1 (profile 10) needs software encoding on this CPU and has thin player support, while HEVC DV 8.1 plays on the family's devices and the A380 encodes HEVC in hardware | DV titles re-encoded to HEVC with the RPU kept via `dovi_tool` (P7 converted to 8.1, P5 skipped); everything else to AV1. Validate on 2-3 DV titles (DV through Plex on the TV, quality, size) before the library run |
 | Media pool | Owner is moving SSDs with an existing pool and library into the new server | Import (optionally renamed to `tank`); consolidate into a single `<pool>/data` dataset; `05-import-pool.sh` + runbook 01 §1a |
 | Execution mode | Host, router and GPU steps are high-stakes | Guided |
 | Planning depth | Design already defines 6 phases | Standard |
@@ -86,4 +89,4 @@ Family members request a title in one place, it appears automatically at the rig
 - Recovery stack: Proxmox snapshots, then PBS, then restic of appdata; git revert handles config.
 
 ---
-*Last updated: 2026-09-28 (Jellyfin optional evaluation; host hardware; Phase 2 decisions: 4K access, anime routing, approach)*
+*Last updated: 2026-11-13 (Dolby Vision titles kept as HEVC DV 8.1; earlier: Jellyfin optional evaluation, host hardware, Phase 2 decisions)*

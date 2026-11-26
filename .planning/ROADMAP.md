@@ -57,8 +57,9 @@
 **Recommended Agents**: engineering-infrastructure-devops, testing-performance-benchmarker, testing-qa-verification-specialist
 **Success Criteria**:
 - [ ] `recyclarr sync` applies the HD, 4K and anime profiles; AV1 and DV custom-format scores are 0; DV without HDR10 fallback is scored strongly negative in the 4K profiles
-- [ ] FileFlows encodes HD and 4K samples to AV1 on the A380 (QSV), within the 01:00-07:00 window with 1 runner
+- [ ] FileFlows encodes HD and non-DV 4K samples to AV1 on the A380 (QSV), within the 01:00-07:00 window with 1 runner
 - [ ] 4K output is 10-bit with HDR10 mastering/MaxCLL metadata intact (checked with ffprobe/MediaInfo); DV profile 5 samples are skipped
+- [ ] Dolby Vision samples (profile 8.1 and 7) are re-encoded to 10-bit HEVC with the RPU re-injected: same frame count as the source, `dovi_tool info` shows profile 8.1, HDR10 metadata intact, and Plex plays them in Dolby Vision on the owner's TV
 - [ ] Output that isn't at least 15-20% smaller is rejected; after a replacement, Sonarr/Radarr rescan without flagging an upgrade or re-downloading
 - [ ] Bazarr fetches subtitles for HD items; Maintainerr rules run in dry-run mode
 **Plans**: 3

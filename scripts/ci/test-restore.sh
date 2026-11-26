@@ -132,12 +132,23 @@ while [[ $# -gt 0 && "$1" == --* ]]; do
 done
 exec "$@"
 EOF
-chmod +x "$T/bin/ssh" "$T/bin/docker" "$T/bin/setpriv"
+# as-root: run a command through sudo with the caller's whole environment.
+# sudo resets PATH (secure_path) and drops variables such as VM_HOST or
+# APPDATA_ROOT. `sudo -E` would keep them, but sudo-rs (the default sudo on
+# Ubuntu 26.04 runners) ignores -E, so the environment is passed as explicit
+# `env NAME=value` arguments instead. A script rather than a function, so it
+# also works after `env VAR=value`.
+cat > "$T/bin/as-root" <<'EOF'
+#!/usr/bin/env bash
+vars=()
+while IFS= read -r -d '' v; do vars+=("$v"); done < <(env -0)
+exec sudo env "${vars[@]}" "$@"
+EOF
+chmod +x "$T/bin/ssh" "$T/bin/docker" "$T/bin/setpriv" "$T/bin/as-root"
 mkdir -p "$T/logs"
 export STUB_LOG_DIR="$T/logs"
 export PATH="$T/bin:$PATH"
-# sudo resets PATH (secure_path), so the stubs are passed through explicitly.
-SUDO=(sudo -E env "PATH=$PATH")
+SUDO=(as-root)
 
 # --- synthetic fixture: fake old /docker tree + archive --------------------------
 S="$T/src/docker"
