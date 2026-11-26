@@ -9,3 +9,6 @@ _inspect.json
 _compose-resolved.yml
 *.tar.zst
 
+
+# Temporary local copy of the Phase 2 LAN-port override (runbook 04, removed in section 8)
+compose.lan.yaml
