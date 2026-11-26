@@ -70,7 +70,7 @@
 **Recommended Agents**: engineering-infrastructure-devops, testing-qa-verification-specialist, product-technical-writer
 **Success Criteria**:
 - [ ] Homepage shows every service through Twingate; Uptime Kuma monitors all public and internal endpoints
-- [ ] Discord/Notifiarr alerts fire for a test download, a failed monitor and a Diun image update
+- [ ] Discord/Notifiarr alerts fire for a test download and a failed monitor (image updates are tracked in Breeze RMM, not Diun)
 - [ ] Nightly vzdump to PBS and Backrest/restic of appdata to the off-site target both complete successfully
 - [ ] Sanoid snapshots, ZFS scrub and SMART alerting are active on the host
 - [ ] A restore drill (VM from PBS plus appdata from restic) succeeds and is documented in `docs/runbooks/`

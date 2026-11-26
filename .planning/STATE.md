@@ -11,6 +11,7 @@
 ```
 
 ## Recent Decisions
+- 2026-11-26: no Diun in Phase 5 (R10): the owner tracks container image updates in Breeze RMM. Updates remain pinned tag bumps in the repo with `config/min-versions.txt` raised alongside (PR #13 pinned the versions media-01 runs, from ghcr.io, after a manual `:latest` upgrade)
 - 2026-11-13: Dolby Vision titles are kept: FileFlows re-encodes them to 10-bit HEVC on the A380 with the DV RPU extracted and re-injected via `dovi_tool` (P7 converted to 8.1, P5 skipped, low-bitrate files skipped); everything else goes to AV1. Replaces "DV dropped" in R8. Phase 4 adds `dovi_tool` and `mkvmerge` to FileFlows and a 2-3 title DV validation before the library run
 - Execution mode: Guided
 - Planning depth: Standard

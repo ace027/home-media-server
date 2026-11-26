@@ -28,6 +28,30 @@ closed: certificates come from DNS-01, so no HTTP challenge is needed.
 - `.env` holds your real `DOMAIN`, and the VM user is in the `docker` group.
 - `dig` is installed for the DDNS check: `sudo apt install dnsutils`.
 
+### Before you start: update the checkout, keep the LAN ports
+
+Every step below uses scripts from this version, so pull it first. This
+version no longer ships the Phase 2 LAN-port override (`compose.lan.yaml`),
+but your `.env` still points `COMPOSE_FILE` at it, and you need those ports
+until section 8 proves the new routes. Put the old file back as a local,
+untracked copy:
+
+```bash
+git pull --ff-only
+git show f9885db:compose.lan.yaml > compose.lan.yaml   # temporary; removed in section 8
+docker compose config -q && echo compose-ok
+docker compose up -d prowlarr sonarr sonarr-anime sonarr-4k radarr radarr-4k lidarr sabnzbd plex seerr tautulli
+```
+
+`f9885db` is the last `dev` commit that still had the file. `git status`
+lists it as untracked until section 8 deletes it; never commit it.
+
+Start only the Phase 2 apps here, not a bare `docker compose up -d`: the
+edge services (Traefik, socket-proxy, cloudflare-ddns, Authentik, CrowdSec)
+mount secret files that do not exist until section 2, and Docker refuses to
+create them (`bind source path does not exist: .../secrets/...`), which also
+interrupts the recreation of the apps. Section 4 starts the edge.
+
 ## 1. Cloudflare tokens and DNS records
 
 **Two tokens.** Traefik (certificates) and cloudflare-ddns (A records) each get
@@ -153,7 +177,14 @@ On the router, forward **only**:
 | TCP 32400 | `192.168.50.16:32400` | Plex |
 
 Remove any forward for ports 80 and 81 (the old NPM proxy). Nothing else is
-forwarded.
+forwarded to the VM.
+
+If another service already receives WAN 443 (another VM with its own reverse
+proxy), move it off 443 **before** changing this forward, or it goes offline.
+A single public IP can send 443 to one place only. For a web app built to sit
+behind Cloudflare, a Cloudflare Tunnel (`cloudflared`, outbound only) frees
+443 without making it depend on this VM. Forwards for that service's other
+ports (for example a TURN server's UDP range) are unaffected.
 
 ## 4. Traefik and certificates
 
@@ -730,12 +761,13 @@ still uses it):
 ```bash
 sed -i 's/^COMPOSE_FILE=/# COMPOSE_FILE=/' .env
 grep -n 'COMPOSE_FILE' .env
-git pull
+rm -f compose.lan.yaml
 docker compose up -d --remove-orphans
 ```
 
-`git pull` brings this change (the deletion of the override file).
-`--remove-orphans` recreates the services that had a LAN port without it.
+`rm` deletes the temporary copy from "Before you start" (the repository no
+longer has the file). `--remove-orphans` recreates the services that had a
+LAN port without it.
 Then check that nothing but 443 and 32400 is published:
 
 ```bash
