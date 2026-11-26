@@ -40,11 +40,17 @@ untracked copy:
 git pull --ff-only
 git show f9885db:compose.lan.yaml > compose.lan.yaml   # temporary; removed in section 8
 docker compose config -q && echo compose-ok
-docker compose up -d
+docker compose up -d prowlarr sonarr sonarr-anime sonarr-4k radarr radarr-4k lidarr sabnzbd plex seerr tautulli
 ```
 
 `f9885db` is the last `dev` commit that still had the file. `git status`
 lists it as untracked until section 8 deletes it; never commit it.
+
+Start only the Phase 2 apps here, not a bare `docker compose up -d`: the
+edge services (Traefik, socket-proxy, cloudflare-ddns, Authentik, CrowdSec)
+mount secret files that do not exist until section 2, and Docker refuses to
+create them (`bind source path does not exist: .../secrets/...`), which also
+interrupts the recreation of the apps. Section 4 starts the edge.
 
 ## 1. Cloudflare tokens and DNS records
 
