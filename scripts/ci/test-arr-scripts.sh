@@ -539,8 +539,8 @@ done
 # untouched (equal apart from the masked key), the fresh ones POSTed.
 bodies "PUT sonarr /api/v3/downloadclient/2" | jq -e --arg k "$KEY" '
   .id == 2 and .name == "SABnzbd" and .enable and .removeCompletedDownloads and .removeFailedDownloads
-  and (.fields | map({(.name): .value}) | add) as $f
-  | $f.host == "sabnzbd" and $f.port == 8080 and $f.useSsl == false and $f.apiKey == $k and $f.tvCategory == "tv"' >/dev/null \
+  and ((.fields | map({(.name): .value}) | add) as $f
+  | $f.host == "sabnzbd" and $f.port == 8080 and $f.useSsl == false and $f.apiKey == $k and $f.tvCategory == "tv")' >/dev/null \
   || fail wire-apply "sonarr SAB client PUT body"
 bodies "PUT sonarr-anime /api/v3/downloadclient/2" | jq -e '(.fields | map({(.name): .value}) | add).tvCategory == "anime"' >/dev/null \
   || fail wire-apply "sonarr-anime category"
