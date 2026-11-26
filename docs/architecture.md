@@ -36,7 +36,7 @@ stacks/media.yaml        # plex, seerr, tautulli; jellyfin behind the optional `
 stacks/arr.yaml          # prowlarr, sonarr(-anime, -4k), radarr(-4k), lidarr, bazarr, recyclarr, maintainerr (Phases 2, 4)
 stacks/download.yaml     # sabnzbd (Phase 2)
 stacks/transcode.yaml    # fileflows (Phase 4)
-stacks/ops.yaml          # homepage, uptime-kuma, notifiarr, diun, backrest, dozzle (Phase 5)
+stacks/ops.yaml          # homepage, uptime-kuma, notifiarr, backrest, dozzle (Phase 5)
 .env.example             # env contract consumed by every stack file and script
 .gitignore               # ignores .env and secrets/ (except .gitkeep)
 secrets/                 # gitignored; Docker secrets or *_FILE sources
