@@ -877,8 +877,8 @@ run_verify
 result verify-bad-json FAIL plex-hw 'unexpected error'
 [[ "$(line_of seerr-servers)" == PASS* ]] || fail verify-bad-json "checks after the bad response did not run"
 reset_stub
-run_capture env STUB_RUNNING="$CORE_UP" PLEX_PAGE_SIZE=2 STUB_IMAGES="lscr.io/linuxserver/sonarr:4.0.19.2979-ls320" "$VERIFY"
-result verify-images FAIL image-versions 'BELOW-MIN: lscr.io/linuxserver/sonarr:4.0.19.2979-ls320'
+run_capture env STUB_RUNNING="$CORE_UP" PLEX_PAGE_SIZE=2 STUB_IMAGES="ghcr.io/linuxserver/sonarr:4.0.20.3014-ls5" "$VERIFY"
+result verify-images FAIL image-versions 'BELOW-MIN: ghcr.io/linuxserver/sonarr:4.0.20.3014-ls5'
 ok "an API error or unparsable response fails only its check, naming the service; image-versions uses check-min-versions"
 
 # --- 14c. jellyfin running ------------------------------------------------------------

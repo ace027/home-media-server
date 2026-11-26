@@ -102,12 +102,12 @@ scripts/ci/check-min-versions.sh >/dev/null || fail "min-versions: repo compose.
 ok "min-versions repo"
 
 write_compose "$tmp/below.yaml" \
-  lscr.io/linuxserver/sonarr:4.0.19.2979-ls320 \
-  ghcr.io/seerr-team/seerr:v3.4.0 \
-  lscr.io/linuxserver/plex:1.43.4.10903-e5521bd8c-ls323
+  ghcr.io/linuxserver/sonarr:4.0.20.3014-ls5 \
+  ghcr.io/seerr-team/seerr:v3.5.1 \
+  ghcr.io/linuxserver/plex:1.43.5.11079-b3b13e506-ls333
 expect_min "min-versions downgrade" 1 "$tmp/below.yaml"
 [[ "$(grep -c '^BELOW-MIN: ' <<<"$out")" -eq 3 ]] || fail "min-versions downgrade: want 3 BELOW-MIN" "$out"
-for image in sonarr:4.0.19.2979-ls320 seerr:v3.4.0 plex:1.43.4.10903-e5521bd8c-ls323; do
+for image in sonarr:4.0.20.3014-ls5 seerr:v3.5.1 plex:1.43.5.11079-b3b13e506-ls333; do
   grep -q "^BELOW-MIN: .*/$image < " <<<"$out" || fail "min-versions downgrade: $image not reported" "$out"
 done
 ok "min-versions downgrade fails"
@@ -117,13 +117,13 @@ expect_min "min-versions no images" 1 "$tmp/none.yaml"
 grep -q '^NO-IMAGES: ' <<<"$out" || fail "min-versions no images: want NO-IMAGES" "$out"
 ok "min-versions no listed image fails"
 
-write_compose "$tmp/plex.yaml" lscr.io/linuxserver/plex:1.43.4.10903-e5521bd8c-ls325
+write_compose "$tmp/plex.yaml" ghcr.io/linuxserver/plex:1.43.5.11079-b3b13e506-ls335
 expect_min "min-versions plex hash" 0 "$tmp/plex.yaml"
 grep -q '^OK: 1 images at or above minimum' <<<"$out" || fail "min-versions plex hash: want OK" "$out"
 ok "min-versions plex hash newer passes"
 
 # A newer version passes even with a lower ls number; ls only breaks ties.
-write_compose "$tmp/newer.yaml" lscr.io/linuxserver/sonarr:4.0.20.1-ls1
+write_compose "$tmp/newer.yaml" ghcr.io/linuxserver/sonarr:4.0.21.1-ls1
 expect_min "min-versions newer version" 0 "$tmp/newer.yaml"
 ok "min-versions newer version passes"
 
