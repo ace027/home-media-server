@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2317
-# (SC2317: the check_* functions and their helpers are called indirectly,
+# shellcheck disable=SC2317,SC2329
+# (SC2317 and, from shellcheck 0.11, SC2329: the check_* functions and their helpers are called indirectly,
 # by name, from run_check.)
 set -Eeuo pipefail
 # shellcheck source=scripts/lib/common.sh
