@@ -325,6 +325,15 @@ the user interface need answer only the LAN and Twingate (`lan-admin@docker`;
 routers `auth-admin` and `auth-admin-api`, see 6.8). Redis is not used: since 2025.10
 Authentik keeps its cache and task queue in Postgres.
 
+**Open the admin interface at `https://auth.int.<domain>/if/admin/`**, not at
+`auth.<domain>`. `auth.<domain>` resolves to the WAN IP everywhere, so even
+from home the request leaves and comes back from a public address, and its
+LAN-only admin pages answer `403 Forbidden`. `auth.int.<domain>` is the same
+Authentik on its LAN name (router `auth-int`, `lan-admin@docker`): the `*.int`
+record points it at the VM and the Twingate `*.int` resource covers it, so it
+works from the LAN and over Twingate, and nowhere else. Logins, invitations
+and forward-auth stay on the public `auth.<domain>`.
+
 ### 6.1 First start and bootstrap login
 
 Set the bootstrap admin's email in `.env` **before the first start** (the
@@ -350,7 +359,7 @@ bootstrap password (it never leaves `secrets/`):
 cat secrets/authentik_bootstrap_password; echo
 ```
 
-From the LAN or Twingate, open `https://auth.<domain>/if/admin/` and log in
+From the LAN or Twingate, open `https://auth.int.<domain>/if/admin/` and log in
 as `akadmin` with that password. `akadmin` is a superuser, so Authentik asks
 you to enrol an authenticator straight away: choose TOTP (an authenticator
 app) or WebAuthn (a security key or passkey) and finish it.
@@ -752,7 +761,7 @@ then loads the app:
 
 `sonarr`, `sonarr-anime`, `sonarr-4k`, `radarr`, `radarr-4k`, `lidarr`,
 `prowlarr`, `sabnzbd`, `tautulli`, `traefik` (the dashboard), and
-`jellyfin` if you run it. `https://auth.<domain>/if/admin/` must also work.
+`jellyfin` if you run it. `https://auth.int.<domain>/if/admin/` must also work.
 
 Only then remove the old ports. In `.env`, comment out (or delete) the
 `COMPOSE_FILE=` line you enabled in Phase 2 (keep `LAN_IP`; `25-arr-wire.sh`
@@ -909,8 +918,11 @@ picked up `authentik_host` yet: `docker compose restart authentik-server`.
 **A `*.int` route says "Permission denied" after login.** Your account is not
 in `admins` (section 6.2).
 
-**`/if/admin/` answers 403 over Twingate.** The connector's IP is outside
-`LAN_CIDR` (section 5).
+**`/if/admin/` answers 403.** On `https://auth.<domain>/if/admin/` that is by
+design from anywhere: the public name resolves to the WAN IP, so the request
+never arrives from the LAN. Use `https://auth.int.<domain>/if/admin/`. If that
+also answers 403 over Twingate, the connector's IP is outside `LAN_CIDR`
+(section 5).
 
 **Certificate not issued, or the browser says the certificate is not
 trusted.** A staging certificate is not trusted by browsers; that is expected

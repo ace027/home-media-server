@@ -233,11 +233,15 @@ check_int_chains() {
   mapfile -t ids < <(docker ps -q)
   [[ ${#ids[@]} -gt 0 ]] || { fail "$id" "no running containers"; return 0; }
   docker inspect "${ids[@]}" >"$W/inspect.json"
-  # Every router with ".int." in its rule must list int@docker in its middlewares.
+  # Every router with ".int." in its rule must list int@docker in its
+  # middlewares, except auth-int (Authentik's own admin on its LAN name), which
+  # must be lan-admin@docker: forward-auth in front of Authentik would loop.
   bad="$(jq -r '.[] | (.Config.Labels // {}) as $l | $l | keys[]
     | select(test("^traefik\\.http\\.routers\\.[^.]+\\.rule$") and ($l[.] | contains(".int.")))
     | sub("\\.rule$"; ".middlewares") as $mk
-    | select(($l[$mk] // "" | split(",") | any(. == "int@docker")) | not)
+    | select(if . == "traefik.http.routers.auth-int.rule"
+             then ($l[$mk] // "") != "lan-admin@docker"
+             else ($l[$mk] // "" | split(",") | any(. == "int@docker")) | not end)
     | sub("^traefik\\.http\\.routers\\."; "") | sub("\\.middlewares$"; "")' "$W/inspect.json" | paste -sd, -)"
   n="$(jq '[.[] | (.Config.Labels // {}) | to_entries[]
     | select((.key | test("^traefik\\.http\\.routers\\.[^.]+\\.rule$")) and (.value | contains(".int.")))] | length' "$W/inspect.json")"
@@ -366,7 +370,7 @@ check_auth_public() {
 }
 
 check_authentik_admin_lan() {
-  local id=authentik-admin-lan ip admin live
+  local id=authentik-admin-lan ip admin live intn
   net_skip "$id" && return 0
   ip="$(traefik_ip)"
   [[ -n "$ip" ]] || { fail "$id" "traefik has no address on the proxy network"; return 0; }
@@ -375,10 +379,13 @@ check_authentik_admin_lan() {
     --resolve "auth.$DOMAIN:443:$ip" "https://auth.$DOMAIN/if/admin/")" || admin=""
   live="$(proxy_curl -sk --max-time 15 -o /dev/null -w '%{http_code}' \
     --resolve "auth.$DOMAIN:443:$ip" "https://auth.$DOMAIN/-/health/live/")" || live=""
-  if [[ "$admin" == 403 && ( "$live" == 200 || "$live" == 204 ) ]]; then
-    pass "$id" "from outside $LAN_CIDR: /if/admin/ -> 403, /-/health/live/ -> $live"
+  # The LAN admin name (auth-int) must refuse the same non-LAN client entirely.
+  intn="$(proxy_curl -sk --max-time 15 -o /dev/null -w '%{http_code}' \
+    --resolve "auth.int.$DOMAIN:443:$ip" "https://auth.int.$DOMAIN/if/admin/")" || intn=""
+  if [[ "$admin" == 403 && "$intn" == 403 && ( "$live" == 200 || "$live" == 204 ) ]]; then
+    pass "$id" "from outside $LAN_CIDR: /if/admin/ -> 403, auth.int /if/admin/ -> 403, /-/health/live/ -> $live"
   else
-    fail "$id" "from outside $LAN_CIDR: /if/admin/ -> ${admin:-no response} (want 403), /-/health/live/ -> ${live:-no response} (want 200 or 204)"
+    fail "$id" "from outside $LAN_CIDR: /if/admin/ -> ${admin:-no response} (want 403), auth.int /if/admin/ -> ${intn:-no response} (want 403), /-/health/live/ -> ${live:-no response} (want 200 or 204)"
   fi
 }
 

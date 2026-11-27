@@ -46,11 +46,18 @@ test_int_routes_use_int_chain() {
   while IFS='|' read -r router mwkey rule; do
     [[ "$rule" == *.int.* ]] || continue
     mw="$(jq -r --arg k "$mwkey" '[.services[].labels[$k]? | strings][0] // ""' <<<"$FULL")"
+    # auth-int is Authentik itself on its LAN name: lan-admin, never forward-auth.
+    if [[ "$router" == auth-int ]]; then
+      [[ "$mw" == "lan-admin@docker" ]] || fail "router auth-int middlewares is '$mw', want lan-admin@docker"
+      jq -e '.services["authentik-server"].labels["traefik.http.routers.auth-int.rule"] | test("^Host\\(`auth\\.int\\.[^`]+`\\)$")' <<<"$FULL" >/dev/null \
+        || fail "auth-int rule is not Host(\`auth.int.<domain>\`)"
+      continue
+    fi
     [[ "$mw" == "int@docker" ]] || fail "router $router (.int. rule) middlewares is '$mw', want int@docker"
     n=$((n + 1))
   done < <(label_routers)
   [[ $n -ge 11 ]] || fail "expected at least 11 .int. routers (10 admin UIs + dashboard), got $n"
-  ok "every .int. router uses int@docker ($n routers)"
+  ok "every .int. router uses int@docker ($n routers); auth-int (Authentik admin on its LAN name) uses lan-admin"
 }
 
 test_only_seerr_is_public() {
@@ -58,15 +65,15 @@ test_only_seerr_is_public() {
   others="$(jq -r '[.services | to_entries[] | .value.labels // {} | to_entries[]
     | select((.key | test("^traefik\\.http\\.routers\\.[^.]+\\.middlewares$")) and .value != "int@docker")
     | "\(.key | capture("routers\\.(?<r>[^.]+)\\.").r)=\(.value)"] | sort | join(",")' <<<"$FULL")"
-  [[ "$others" == "auth-admin-api=lan-admin@docker,auth-admin=lan-admin@docker,auth-public-api=public-auth@docker,auth=public-auth@docker,seerr=public@docker" ]] \
-    || fail "routers not using int@docker: '$others' (want only auth-admin and auth-admin-api=lan-admin@docker, auth and auth-public-api=public-auth@docker, seerr=public@docker)"
+  [[ "$others" == "auth-admin-api=lan-admin@docker,auth-admin=lan-admin@docker,auth-int=lan-admin@docker,auth-public-api=public-auth@docker,auth=public-auth@docker,seerr=public@docker" ]] \
+    || fail "routers not using int@docker: '$others' (want only auth-admin, auth-admin-api and auth-int=lan-admin@docker, auth and auth-public-api=public-auth@docker, seerr=public@docker)"
   jq -e '.services.seerr.labels["traefik.http.routers.seerr.rule"] | test("^Host\\(`requests\\.[^`]+`\\)$")' <<<"$FULL" >/dev/null \
     || fail "seerr rule is not Host(\`requests.<domain>\`)"
   jq -e '.services.traefik.labels["traefik.http.routers.dashboard.rule"] | test("^Host\\(`traefik\\.int\\.[^`]+`\\)$")' <<<"$FULL" >/dev/null \
     || fail "dashboard rule is not Host(\`traefik.int.<domain>\`)"
   jq -e '.services.traefik.labels["traefik.http.routers.dashboard.service"] == "api@internal"' <<<"$FULL" >/dev/null \
     || fail "dashboard router service is not api@internal"
-  ok "only seerr (public), auth and auth-public-api (public-auth) are internet-facing (auth-admin, auth-admin-api on lan-admin); the dashboard is on traefik.int"
+  ok "only seerr (public), auth and auth-public-api (public-auth) are internet-facing (auth-admin, auth-admin-api, auth-int on lan-admin); the dashboard is on traefik.int"
 }
 
 test_chains() {
