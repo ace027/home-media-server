@@ -282,6 +282,14 @@ services:
       - traefik.http.routers.auth-admin.middlewares=lan-admin@docker
       - traefik.http.routers.auth-admin.priority=100
       - traefik.http.routers.auth-admin.service=authentik
+      # Same Authentik, whole site, on its LAN name: the admin UI for the owner
+      # (https://auth.int.<domain>/if/admin/). auth.<domain> resolves to the WAN
+      # IP everywhere, so its LAN-only admin routes are unreachable from inside;
+      # *.int.<domain> resolves to the VM and is a Twingate resource. lan-admin
+      # (no authentik forward-auth: Authentik guarding itself would loop).
+      - traefik.http.routers.auth-int.rule=Host(`auth.int.${DOMAIN}`)
+      - traefik.http.routers.auth-int.middlewares=lan-admin@docker
+      - traefik.http.routers.auth-int.service=authentik
       # Authentik API, fail closed: everything under /api/ is LAN/Twingate only
       # (auth-admin-api, priority 110), so a stolen admin session or API token is useless
       # from the internet and endpoints added by a future Authentik release are LAN-only
