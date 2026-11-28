@@ -131,10 +131,14 @@ services:
       - traefik.http.middlewares.secure-headers.headers.contentTypeNosniff=true
       - traefik.http.middlewares.secure-headers.headers.frameDeny=true
       - traefik.http.middlewares.secure-headers.headers.referrerPolicy=strict-origin-when-cross-origin
-      - traefik.http.middlewares.rate-limit.ratelimit.average=20
-      - traefik.http.middlewares.rate-limit.ratelimit.burst=50
-      # Login brute-force brake for auth.<domain> (per source IP, Traefik's default
-      # criterion): 5 req/s sustained, bursts of 20 (a login page load fetches assets).
+      # Public pages (Seerr, Authentik's pages and scripts): per source IP. A first page
+      # load fetches dozens of script chunks at once, so the burst must be generous;
+      # CrowdSec and the geo-block do the real filtering.
+      - traefik.http.middlewares.rate-limit.ratelimit.average=50
+      - traefik.http.middlewares.rate-limit.ratelimit.burst=200
+      # Login brute-force brake for auth.<domain>'s API (flow executor: every password
+      # and MFA attempt), per source IP: 5 req/s sustained, bursts of 20. Only the
+      # auth-public-api router uses it; pages and static assets would trip it (429).
       - traefik.http.middlewares.auth-rate-limit.ratelimit.average=5
       - traefik.http.middlewares.auth-rate-limit.ratelimit.burst=20
       # Authentik forward-auth via the embedded outpost. Fails closed: if authentik-server
@@ -165,7 +169,7 @@ services:
       # Chains: int = LAN/Twingate admin routes (allowlist, headers, Authentik),
       # lan-admin = LAN/Twingate only without forward-auth (Authentik's own /if/admin),
       # public = internet-facing routes (CrowdSec, geo-block, rate limit, headers),
-      # public-auth = public with the stricter auth-rate-limit (auth.<domain> only)
+      # public-auth = public with the stricter auth-rate-limit (auth.<domain>'s login API)
       - traefik.http.middlewares.int.chain.middlewares=lan-only,secure-headers,authentik
       - traefik.http.middlewares.lan-admin.chain.middlewares=lan-only,secure-headers
       - traefik.http.middlewares.public.chain.middlewares=crowdsec,geoblock,rate-limit,secure-headers
@@ -271,11 +275,12 @@ services:
       start_period: 60s
     labels:
       - traefik.enable=true
-      # Login, flows and the forward-auth callback: public, with the stricter login rate
-      # limit (public-auth@docker). Never add authentik@docker here: the auth router
-      # would call itself in a loop.
+      # Login pages, flows, static assets and the forward-auth callback: public
+      # (public@docker). The login attempts themselves go through the flow-executor API
+      # on auth-public-api, which carries the stricter public-auth@docker. Never add
+      # authentik@docker here: the auth router would call itself in a loop.
       - traefik.http.routers.auth.rule=Host(`auth.${DOMAIN}`)
-      - traefik.http.routers.auth.middlewares=public-auth@docker
+      - traefik.http.routers.auth.middlewares=public@docker
       - traefik.http.routers.auth.service=authentik
       # Admin interface: LAN/Twingate only. Priority 100 so it matches before auth.
       - traefik.http.routers.auth-admin.rule=Host(`auth.${DOMAIN}`) && PathPrefix(`/if/admin`)

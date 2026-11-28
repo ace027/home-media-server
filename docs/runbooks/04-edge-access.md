@@ -317,9 +317,12 @@ puts them back.
 | `20-forward-auth.yaml` | Proxy provider `int-forward-auth` (forward auth, domain level, cookie on `<domain>`), application `admin-uis` bound to `admins` only, embedded outpost serving it at `https://auth.<domain>` |
 | `30-invitation-enrollment.yaml` | Flow `invitation-enrollment`: sign-up works only with a valid invitation |
 
-`auth.<domain>` itself is public (login pages, behind `public-auth@docker`:
-CrowdSec, geo-block, a login rate limit of 5 requests per second per client
-address with bursts of 20, and the secure headers), but its admin interface,
+`auth.<domain>` itself is public: its pages and scripts sit behind
+`public@docker` (CrowdSec, geo-block, the public rate limit, secure headers),
+and the login API that every password and MFA attempt goes through (the
+flow executor, router `auth-public-api`) behind `public-auth@docker`, whose
+rate limit is 5 requests per second per client address with bursts of 20.
+Its admin interface,
 `/if/admin/`, and its whole API apart from a short allowlist the flows and
 the user interface need answer only the LAN and Twingate (`lan-admin@docker`;
 routers `auth-admin` and `auth-admin-api`, see 6.8). Redis is not used: since 2025.10
@@ -561,11 +564,13 @@ Never widen `auth-admin-api` or add a prefix-wide public rule to fix one call.
 ## 7. CrowdSec and geo-block
 
 Every internet-facing route now passes four middlewares in this order:
-`crowdsec`, `geoblock`, a rate limit, `secure-headers`. Seerr uses the
-`public` chain (`rate-limit`: 20 requests per second, bursts of 50) and
-`auth.<domain>`, apart from its LAN-only admin paths, uses `public-auth`
-(`auth-rate-limit`: 5 requests per second per client address, bursts of 20,
-to slow down password guessing).
+`crowdsec`, `geoblock`, a rate limit, `secure-headers`. Seerr and the pages
+and scripts of `auth.<domain>` use the `public` chain (`rate-limit`: 50
+requests per second per client address, bursts of 200; a first page load
+fetches dozens of script files at once). The Authentik login API on
+`auth.<domain>` (`auth-public-api`, which carries every password and MFA
+attempt) uses `public-auth` (`auth-rate-limit`: 5 requests per second per
+client address, bursts of 20, to slow down password guessing).
 
 - **CrowdSec** (`crowdsecurity/crowdsec:v1.8.1`) reads Traefik's JSON access
   log and bans abusive clients. Traefik's bouncer plugin (v1.7.1) pulls the
@@ -972,9 +977,13 @@ cannot reach `crowdsec:8080` or the key differs. `docker compose logs crowdsec
 containers must be on the `crowdsec` network; recreate them with
 `docker compose up -d --force-recreate crowdsec traefik`.
 
-**Login answers 429 Too Many Requests.** `auth-rate-limit` allows 5
-requests per second per client address (bursts of 20). A normal login stays
-well below it; repeated 429s from one address are a script or a stuck page.
+**Login answers 429 Too Many Requests.** `auth-rate-limit` allows 5 API
+requests per second per client address (bursts of 20) on the login API; pages
+and scripts use the public limit (50 per second, bursts of 200). A normal
+login stays well below both; repeated 429s from one address are a script or a
+stuck page. If a page spins and the browser's Network tab shows 429 on its
+`.js` files, the scripts are on the strict limit again: the `auth` router
+must use `public@docker`, only `auth-public-api` uses `public-auth@docker`.
 LAN clients are limited the same way, except on the admin paths
 (`/if/admin/` and the admin API, section 6.8), whose routers carry no rate
 limit.
