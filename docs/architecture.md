@@ -120,8 +120,8 @@ Traefik applies four middleware chains, defined once as labels on the `traefik` 
 |-------|-------------|---------|
 | `int` | `lan-only`, `secure-headers`, `authentik` | Every `*.int.<domain>` route and the Traefik dashboard |
 | `lan-admin` | `lan-only`, `secure-headers` | Authentik's own `/if/admin` and all of its `/api/` except a short public allowlist for the flows and the user interface (no forward-auth, or it would protect itself) |
-| `public` | `crowdsec`, `geoblock`, `rate-limit`, `secure-headers` | The internet-facing routes: Seerr, and Jellyfin if adopted |
-| `public-auth` | `crowdsec`, `geoblock`, `auth-rate-limit`, `secure-headers` | The Authentik login (`auth.<domain>`), with a stricter per-address rate limit |
+| `public` | `crowdsec`, `geoblock`, `rate-limit`, `secure-headers` | The internet-facing routes: Seerr, Authentik's public pages and scripts (`auth.<domain>`), and Jellyfin if adopted |
+| `public-auth` | `crowdsec`, `geoblock`, `auth-rate-limit`, `secure-headers` | The Authentik login API on `auth.<domain>` (router `auth-public-api`: the flow executor and the user interface's allowlisted calls), with a stricter per-address rate limit |
 
 The CrowdSec engine runs on its own `crowdsec` network, shared only with Traefik's bouncer plugin, and reads Traefik's access log. Both Traefik plugins are local plugins: `scripts/vm/45-traefik-plugins.sh` installs them at the commits locked in `config/traefik/plugins.lock`, and Traefik loads them read-only without downloading anything. The geo-block admits only `GEO_ALLOWED_COUNTRIES` (private addresses always pass). Plex is not behind Traefik: `32400/tcp` is forwarded straight to Plex, which is the only exposure besides 443.
 

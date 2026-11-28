@@ -65,15 +65,15 @@ test_only_seerr_is_public() {
   others="$(jq -r '[.services | to_entries[] | .value.labels // {} | to_entries[]
     | select((.key | test("^traefik\\.http\\.routers\\.[^.]+\\.middlewares$")) and .value != "int@docker")
     | "\(.key | capture("routers\\.(?<r>[^.]+)\\.").r)=\(.value)"] | sort | join(",")' <<<"$FULL")"
-  [[ "$others" == "auth-admin-api=lan-admin@docker,auth-admin=lan-admin@docker,auth-int=lan-admin@docker,auth-public-api=public-auth@docker,auth=public-auth@docker,seerr=public@docker" ]] \
-    || fail "routers not using int@docker: '$others' (want only auth-admin, auth-admin-api and auth-int=lan-admin@docker, auth and auth-public-api=public-auth@docker, seerr=public@docker)"
+  [[ "$others" == "auth-admin-api=lan-admin@docker,auth-admin=lan-admin@docker,auth-int=lan-admin@docker,auth-public-api=public-auth@docker,auth=public@docker,seerr=public@docker" ]] \
+    || fail "routers not using int@docker: '$others' (want only auth-admin, auth-admin-api and auth-int=lan-admin@docker, auth-public-api=public-auth@docker, auth and seerr=public@docker)"
   jq -e '.services.seerr.labels["traefik.http.routers.seerr.rule"] | test("^Host\\(`requests\\.[^`]+`\\)$")' <<<"$FULL" >/dev/null \
     || fail "seerr rule is not Host(\`requests.<domain>\`)"
   jq -e '.services.traefik.labels["traefik.http.routers.dashboard.rule"] | test("^Host\\(`traefik\\.int\\.[^`]+`\\)$")' <<<"$FULL" >/dev/null \
     || fail "dashboard rule is not Host(\`traefik.int.<domain>\`)"
   jq -e '.services.traefik.labels["traefik.http.routers.dashboard.service"] == "api@internal"' <<<"$FULL" >/dev/null \
     || fail "dashboard router service is not api@internal"
-  ok "only seerr (public), auth and auth-public-api (public-auth) are internet-facing (auth-admin, auth-admin-api, auth-int on lan-admin); the dashboard is on traefik.int"
+  ok "only seerr and auth (public) and auth-public-api (public-auth) are internet-facing (auth-admin, auth-admin-api, auth-int on lan-admin); the dashboard is on traefik.int"
 }
 
 test_chains() {
@@ -88,8 +88,8 @@ test_chains() {
       and (.["traefik.http.middlewares.lan-only.ipallowlist.sourcerange"] | length > 0)
       and .["traefik.http.middlewares.secure-headers.headers.stsSeconds"] == "31536000"
       and .["traefik.http.middlewares.secure-headers.headers.frameDeny"] == "true"
-      and .["traefik.http.middlewares.rate-limit.ratelimit.average"] == "20"
-      and .["traefik.http.middlewares.rate-limit.ratelimit.burst"] == "50"' <<<"$FULL" >/dev/null \
+      and .["traefik.http.middlewares.rate-limit.ratelimit.average"] == "50"
+      and .["traefik.http.middlewares.rate-limit.ratelimit.burst"] == "200"' <<<"$FULL" >/dev/null \
     || fail "traefik middleware/chain labels are not as specified"
   jq -e '.services.traefik.labels
     | .["traefik.http.middlewares.authentik.forwardauth.address"] == "http://authentik-server:9000/outpost.goauthentik.io/auth/traefik"
@@ -230,10 +230,10 @@ test_authentik_networks() {
 test_auth_routers() {
   jq -e '.services["authentik-server"].labels
     | (.["traefik.http.routers.auth.rule"] | test("^Host\\(`auth\\.[^`]+`\\)$"))
-      and .["traefik.http.routers.auth.middlewares"] == "public-auth@docker"
+      and .["traefik.http.routers.auth.middlewares"] == "public@docker"
       and .["traefik.http.routers.auth.service"] == "authentik"
       and .["traefik.http.services.authentik.loadbalancer.server.port"] == "9000"' <<<"$FULL" >/dev/null \
-    || fail "auth router is not Host(auth.<domain>) -> public-auth@docker -> authentik:9000"
+    || fail "auth router is not Host(auth.<domain>) -> public@docker -> authentik:9000 (the strict login limit belongs on auth-public-api only)"
   # authentik@docker on the auth router would send Authentik's own login through
   # forward-auth (a redirect loop); int@docker contains it, so both are banned.
   jq -e '.services["authentik-server"].labels["traefik.http.routers.auth.middlewares"]
@@ -245,7 +245,7 @@ test_auth_routers() {
       and .["traefik.http.routers.auth-admin.priority"] == "100"
       and .["traefik.http.routers.auth-admin.service"] == "authentik"' <<<"$FULL" >/dev/null \
     || fail "auth-admin router is not PathPrefix(/if/admin) -> lan-admin@docker with priority 100"
-  ok "auth is public-auth without forward-auth; auth-admin (/if/admin) is lan-admin with priority 100"
+  ok "auth is public (pages, assets) without forward-auth; auth-admin (/if/admin) is lan-admin with priority 100"
 }
 
 # Authentik API exposure (fail closed). "<method> <path>" probes: AK_API_PUBLIC must be

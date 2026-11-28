@@ -57,7 +57,7 @@ crowdsec-bouncer: the traefik-bouncer pulled decisions within the last 2 minutes
 crowdsec-acquis: CrowdSec has read lines from Traefik's access log;
 public-chain: the public chain is crowdsec, geoblock, rate-limit, secure-headers, and only
 seerr, auth and jellyfin routers use it; public-auth is crowdsec, geoblock,
-auth-rate-limit, secure-headers and the auth router uses it;
+auth-rate-limit, secure-headers and the auth-public-api router (login API) uses it;
 no-lan-override: compose.lan.yaml is gone and no container publishes a port but 443 and 32400;
 crowdsec-ban: only with --ban-test: bans a throwaway client for 2 minutes and expects a
 403 from requests.<domain>, then lifts the ban; otherwise SKIP.)
@@ -522,8 +522,8 @@ check_public_chain() {
   [[ "$labels" == "$auth_chain" ]] || { fail "$id" "public-auth chain is '${labels:-unset}', want $auth_chain"; return 0; }
   mapfile -t ids < <(docker ps -q)
   docker inspect "${ids[@]}" >"$W/inspect.json"
-  auth_mw="$(jq -r '[.[] | .Config.Labels["traefik.http.routers.auth.middlewares"] // empty][0] // ""' "$W/inspect.json")"
-  [[ "$auth_mw" == "public-auth@docker" ]] || { fail "$id" "auth router middlewares is '${auth_mw:-unset}', want public-auth@docker"; return 0; }
+  auth_mw="$(jq -r '[.[] | .Config.Labels["traefik.http.routers.auth-public-api.middlewares"] // empty][0] // ""' "$W/inspect.json")"
+  [[ "$auth_mw" == "public-auth@docker" ]] || { fail "$id" "auth-public-api router middlewares is '${auth_mw:-unset}', want public-auth@docker"; return 0; }
   # Routers whose middlewares include public@docker, other than the expected ones.
   bad="$(jq -r '.[] | (.Config.Labels // {}) as $l | $l | keys[]
     | select(test("^traefik\\.http\\.routers\\.[^.]+\\.middlewares$") and ($l[.] | split(",") | any(. == "public@docker")))
@@ -532,7 +532,7 @@ check_public_chain() {
   if [[ -n "$bad" ]]; then
     fail "$id" "unexpected routers on public@docker: $bad"
   else
-    pass "$id" "public = $chain (seerr, jellyfin); public-auth = $auth_chain (auth)"
+    pass "$id" "public = $chain (seerr, auth, jellyfin); public-auth = $auth_chain (auth-public-api)"
   fi
 }
 
